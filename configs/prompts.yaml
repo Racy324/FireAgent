@@ -1,0 +1,8 @@
+# Prompt registry placeholder. Prompt bodies will be added in Stage 8.
+prompts:
+  intent_router: fireagent/prompts/intent_router.md
+  query_rewrite: fireagent/prompts/query_rewrite.md
+  sufficiency_check: fireagent/prompts/sufficiency_check.md
+  answer_generation: fireagent/prompts/answer_generation.md
+  hallucination_check: fireagent/prompts/hallucination_check.md
+

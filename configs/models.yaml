@@ -1,0 +1,28 @@
+# 模型默认配置。实际部署时，.env 中的同名配置会覆盖这里的值。
+embedding:
+  provider: ollama
+  model_name: bge-m3
+  device: auto
+  normalize_embeddings: true
+  base_url: http://localhost:11434
+  timeout: 60.0
+  batch_size: 32
+
+reranker:
+  provider: flagembedding
+  model_name: models/bge-reranker-v2-m3
+  device: auto
+  base_url: ""             # 仅 provider=ollama 时需要，flagembedding 从本地加载
+  timeout: 60.0
+  batch_size: 16
+  fallback_to_lexical: true
+
+llm:
+  provider: openai_compatible
+  base_url: ""
+  api_key: ""
+  model: ""
+  temperature: 0.1
+  max_tokens: 1200
+  timeout: 60.0
+  enabled: true

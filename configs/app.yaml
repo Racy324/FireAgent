@@ -1,0 +1,65 @@
+# Application-level defaults.
+app:
+  name: FireAgent
+  environment: local
+  log_level: INFO
+
+rag:
+  chunk_size: 800
+  chunk_overlap: 120
+  parent_chunk_size: 1800
+  enable_web_fallback: true
+
+ingestion:
+  pdf_parser: pdfplumber
+  mineru_output_dir: data/parsed/mineru
+  mineru_backend: pipeline
+  mineru_model_source: ""
+  mineru_timeout: 1800.0
+  mineru_keep_output: true
+  mineru_cli_path: mineru
+
+retrieval:
+  max_rewrite_queries: 4
+  dense_top_k: 30
+  sparse_top_k: 30
+  fusion_top_k: 50
+  rerank_top_k: 10
+  dense_weight: 0.65
+  sparse_weight: 0.35
+  rrf_k: 60
+  context_max_chars: 6000
+  context_max_evidence_chars: 1200
+  sufficiency_min_score: 0.18
+  sufficiency_min_evidence: 2
+  sufficiency_min_term_coverage: 0.30
+
+web:
+  temporal_keywords:
+    - 最新
+    - 政策
+    - 标准
+    - 规范
+    - 法规
+    - 事故
+    - "2026"
+    - 今年
+    - 最近
+
+tavily:
+  api_key: ""
+  base_url: https://api.tavily.com
+  max_results: 5
+  search_depth: basic
+  topic: general
+  include_answer: true
+  include_raw_content: false
+  include_images: false
+  timeout: 30.0
+  chunks_per_source: 3
+
+evaluation:
+  dataset_path: data/eval/fireagent_eval_sample.jsonl
+  output_dir: data/eval/runs
+  default_mode: manual
+  fail_under:

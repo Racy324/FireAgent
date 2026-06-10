@@ -1,0 +1,56 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Git and local tooling
+.git/
+.github/
+.claude/
+.vscode/
+.idea/
+
+# Python caches and environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+ENV/
+*.egg-info/
+build/
+dist/
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Local data, models, and runtime outputs
+data/raw_pdfs/
+data/parsed/
+data/chunks/
+data/eval/runs/
+data/tmp/
+models/
+qdrant_storage/
+logs/
+*.log
+log.txt
+
+# Personal workspace files
+AGENTS.md
+Claude.md
+notes/
+personal-kb/
+download.py
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini

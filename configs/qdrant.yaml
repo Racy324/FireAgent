@@ -1,0 +1,12 @@
+# Qdrant defaults.
+qdrant:
+  url: http://localhost:6333
+  api_key: ""
+  collection: fireagent_papers
+  dense_vector_name: dense
+  sparse_vector_name: bm25
+  dense_vector_size: 1024
+  distance: cosine
+  hnsw:
+    m: 16
+    ef_construct: 100
