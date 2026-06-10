@@ -18,7 +18,7 @@ from fireagent.evaluation.dataset import (
 from fireagent.evaluation.manual import ManualRAGEvaluator
 from fireagent.evaluation.ragas_adapter import RagasEvaluationError, evaluate_with_ragas
 from fireagent.evaluation.schema import EvaluationCase, EvaluationPrediction, EvaluationSummary
-from fireagent.graph.workflow import run_fireagent_workflow
+from fireagent.graph.workflow import build_fireagent_workflow, run_fireagent_workflow
 from fireagent.utils.config import FireAgentConfig, get_config
 from fireagent.vectorstore import FireAgentQdrantClient
 
@@ -103,17 +103,19 @@ class RAGEvaluationRunner:
     def generate_predictions(self, cases: list[EvaluationCase]) -> list[EvaluationPrediction]:
         """对评测集逐条调用 FireAgent，生成预测结果。"""
         predictions: list[EvaluationPrediction] = []
+        # 复用同一个 workflow 实例，避免每条用例重复加载模型（reranker/embedding）
+        workflow = None
+        if self.answer_fn is None:
+            workflow = build_fireagent_workflow(config=self.config, vectorstore=self.vectorstore)
         for case in cases:
             if self.answer_fn is not None:
                 predictions.append(self.answer_fn(case))
                 continue
             start = time.perf_counter()
             try:
-                state = run_fireagent_workflow(
-                    user_query=case.question,
-                    config=self.config,
-                    vectorstore=self.vectorstore,
-                )
+                from fireagent.graph.state import create_initial_state
+                result = workflow.invoke(create_initial_state(case.question))
+                state = dict(result)
                 latency = time.perf_counter() - start
                 context = str(state.get("final_context", "") or "")
                 predictions.append(
