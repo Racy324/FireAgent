@@ -115,3 +115,26 @@ memory:
   enabled: true
   database_path: data/app/fireagent.db
   recent_message_limit: 8
+  short_term:
+    enabled: true
+    recent_message_limit: 8
+    max_chars: 3500
+    rolling_summary_max_chars: 1500
+    summarize_after_messages: 20
+    intermediate_result_limit: 8
+    pinned_message_limit: 8
+  long_term:
+    enabled: true
+    collection: fireagent_memories
+    top_k: 5
+    max_prompt_chars: 1200
+    min_relevance_score: 0.35
+    write_enabled: true
+    importance_threshold: 0.72
+    confidence_threshold: 0.65
+    max_candidates_per_turn: 2
+    default_half_life_days: 180
+    semantic_half_life_days: 365
+    episodic_half_life_days: 90
+    procedural_half_life_days: 365
+    dedup_similarity_threshold: 0.88

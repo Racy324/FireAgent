@@ -146,6 +146,9 @@ class RAGEvaluationRunner:
                     if hasattr(sufficiency_result, "model_dump")
                     else {}
                 )
+                candidate_citations = list(state.get("candidate_citations", []) or [])
+                used_citation_markers = list(state.get("used_citation_markers", []) or [])
+                invalid_citation_markers = list(state.get("invalid_citation_markers", []) or [])
                 predictions.append(
                     EvaluationPrediction(
                         case_id=case.case_id,
@@ -167,6 +170,10 @@ class RAGEvaluationRunner:
                         },
                         fallback_action=fallback_action,
                         fallback_reason=fallback_reason,
+                        used_citation_markers=used_citation_markers,
+                        invalid_citation_markers=invalid_citation_markers,
+                        candidate_citation_count=len(candidate_citations),
+                        used_citation_count=len(used_citation_markers),
                     )
                 )
             except Exception as exc:  # noqa: BLE001 - 单条评测失败也要保留记录。

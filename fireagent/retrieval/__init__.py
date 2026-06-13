@@ -20,6 +20,7 @@ from fireagent.retrieval.schema import (
     FusedRetrievalResult,
     QueryRewriteResult,
     RerankedRetrievalResult,
+    StructuredCitation,
     SufficiencyResult,
 )
 from fireagent.retrieval.sparse_retriever import SparseRetriever
@@ -48,6 +49,7 @@ __all__ = [
     "QueryRewriter",
     "RerankedRetrievalResult",
     "SparseRetriever",
+    "StructuredCitation",
     "SufficiencyResult",
     "WeightedRRFFusion",
     "build_context",

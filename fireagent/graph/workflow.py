@@ -87,6 +87,8 @@ def run_fireagent_workflow(
     llm_client: Optional[BaseLLMClient] = None,
     session_id: str = "",
     conversation_context: str = "",
+    long_term_memories: str = "",
+    long_term_memory_results: list[Any] | None = None,
 ) -> FireAgentState:
     """便捷函数：编译并运行 FireAgent 工作流。"""
     workflow = build_fireagent_workflow(config=config, vectorstore=vectorstore, llm_client=llm_client)
@@ -95,6 +97,8 @@ def run_fireagent_workflow(
             user_query,
             session_id=session_id,
             conversation_context=conversation_context,
+            long_term_memories=long_term_memories,
+            long_term_memory_results=long_term_memory_results,
         )
     )
     return FireAgentState(**dict(result))

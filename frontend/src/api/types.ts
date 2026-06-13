@@ -7,6 +7,26 @@ export interface ChatRequest {
   include_debug?: boolean
 }
 
+export interface CitationItem {
+  citation_id: string
+  marker: string
+  source_type: string
+  title: string
+  authors: string[]
+  year: number | null
+  doc_id: string
+  chunk_id: string
+  parent_id: string
+  section_title: string
+  section_path: string[]
+  page_start: number | null
+  page_end: number | null
+  url: string
+  score: number
+  text_preview: string
+  metadata: Record<string, unknown>
+}
+
 export interface ChatResponse {
   answer: string
   session_id: string
@@ -14,6 +34,9 @@ export interface ChatResponse {
   intent: string
   evidence_sufficient: boolean
   citations: string[]
+  used_citations: CitationItem[]
+  used_citation_markers: string[]
+  invalid_citation_markers: string[]
   context?: string
   errors: string[]
   debug: Record<string, unknown>
@@ -74,6 +97,9 @@ export interface SSETokenEvent {
 
 export interface SSEDoneEvent {
   citations: string[]
+  used_citations?: CitationItem[]
+  used_citation_markers?: string[]
+  invalid_citation_markers?: string[]
   session_id?: string
   message_id?: string
   intent: string
@@ -115,6 +141,9 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   citations?: string[]
+  used_citations?: CitationItem[]
+  used_citation_markers?: string[]
+  invalid_citation_markers?: string[]
   intent?: string
   evidence_sufficient?: boolean
   safety_notice?: string

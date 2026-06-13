@@ -22,6 +22,28 @@ class ChatRequest(APIModel):
     include_debug: bool = Field(default=False, description="是否返回调试字段")
 
 
+class CitationItem(APIModel):
+    """结构化引用项。"""
+
+    citation_id: str
+    marker: str
+    source_type: str
+    title: str = ""
+    authors: list[str] = Field(default_factory=list)
+    year: Optional[int] = None
+    doc_id: str = ""
+    chunk_id: str = ""
+    parent_id: str = ""
+    section_title: str = ""
+    section_path: list[str] = Field(default_factory=list)
+    page_start: Optional[int] = None
+    page_end: Optional[int] = None
+    url: str = ""
+    score: float = 0.0
+    text_preview: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class ChatResponse(APIModel):
     """问答响应。"""
 
@@ -31,6 +53,9 @@ class ChatResponse(APIModel):
     intent: str = ""
     evidence_sufficient: bool = False
     citations: list[str] = Field(default_factory=list)
+    used_citations: list[CitationItem] = Field(default_factory=list)
+    used_citation_markers: list[str] = Field(default_factory=list)
+    invalid_citation_markers: list[str] = Field(default_factory=list)
     context: Optional[str] = None
     errors: list[str] = Field(default_factory=list)
     debug: dict[str, Any] = Field(default_factory=dict)

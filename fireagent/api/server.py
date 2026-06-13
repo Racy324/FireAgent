@@ -12,6 +12,7 @@ from fireagent import __version__
 from fireagent.api.schemas import (
     ChatRequest,
     ChatResponse,
+    CitationItem,
     HealthResponse,
     IngestFileResult,
     IngestRequest,
@@ -31,6 +32,7 @@ from fireagent.graph.workflow import run_fireagent_workflow
 from fireagent.ingestion import PDFIndexBuilder
 from fireagent.ingestion.pdfplumber_parser import PdfPlumberPDFParser
 from fireagent.memory import MemoryService
+from fireagent.memory.long_term_service import LongTermMemoryService
 from fireagent.utils.config import FireAgentConfig, PROJECT_ROOT, get_config
 from fireagent.vectorstore import FireAgentQdrantClient
 
@@ -70,6 +72,7 @@ def create_app(config: Optional[FireAgentConfig] = None) -> object:
     app.state.config = cfg
     app.state.vectorstore = None
     app.state.memory_service = None
+    app.state.long_term_memory_service = None
 
     def get_vectorstore(hash_embedding: bool = False) -> FireAgentQdrantClient:
         """懒加载 Qdrant 向量库客户端。"""
@@ -104,6 +107,14 @@ def create_app(config: Optional[FireAgentConfig] = None) -> object:
         if app.state.memory_service is None:
             app.state.memory_service = MemoryService(config=cfg)
         return app.state.memory_service
+
+    def get_long_term_memory_service() -> LongTermMemoryService | None:
+        """读取长期记忆服务。"""
+        if not cfg.memory.long_term.enabled:
+            return None
+        if app.state.long_term_memory_service is None:
+            app.state.long_term_memory_service = LongTermMemoryService(config=cfg)
+        return app.state.long_term_memory_service
 
     @app.post("/sessions", response_model=SessionItem)
     def create_session(request: SessionCreateRequest) -> SessionItem:
@@ -160,13 +171,26 @@ def create_app(config: Optional[FireAgentConfig] = None) -> object:
     def chat(request: ChatRequest) -> ChatResponse:
         """在线问答接口。"""
         memory = get_memory_service()
+        long_term_svc = get_long_term_memory_service()
         session_id = request.session_id or ""
         conversation_context = ""
+        long_term_memories = ""
+        short_term_result = None
         user_message_id = ""
         if memory is not None:
             session = memory.get_or_create_session(request.session_id, query=request.query)
             session_id = session.session_id
-            conversation_context = memory.recent_context(session_id)
+            # 构建短期上下文（在保存当前用户消息之前，避免重复）
+            short_term_result = memory.build_short_term_context(session_id, query=request.query)
+            conversation_context = short_term_result.text
+            # 检索长期记忆
+            lt_memory_results = []
+            if long_term_svc is not None:
+                try:
+                    lt_memory_results = long_term_svc.retrieve_for_query(request.query)
+                    long_term_memories = long_term_svc.format_for_prompt(lt_memory_results)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("长期记忆检索失败，跳过: %s", exc)
             user_message = memory.record_user_message(session_id, request.query)
             user_message_id = user_message.message_id
 
@@ -177,6 +201,8 @@ def create_app(config: Optional[FireAgentConfig] = None) -> object:
                 vectorstore=None,
                 session_id=session_id,
                 conversation_context=conversation_context,
+                long_term_memories=long_term_memories,
+                long_term_memory_results=[r.model_dump() for r in lt_memory_results],
             )
         except Exception as exc:  # noqa: BLE001 - API 层统一转 HTTP 错误。
             logger.exception("FireAgent /chat failed")
@@ -191,26 +217,65 @@ def create_app(config: Optional[FireAgentConfig] = None) -> object:
                 "fused_count": len(state.get("fused_results", []) or []),
                 "reranked_count": len(state.get("reranked_results", []) or []),
                 "web_count": len(state.get("web_results", []) or []),
+                "candidate_citation_count": len(state.get("candidate_citations", []) or []),
+                "used_citation_count": len(state.get("used_citations", []) or []),
+                "used_citation_markers": list(state.get("used_citation_markers", []) or []),
+                "invalid_citation_markers": list(state.get("invalid_citation_markers", []) or []),
                 "hallucination_warnings": state.get("hallucination_warnings", []),
                 "conversation_context": conversation_context,
+                "long_term_memories": long_term_memories,
+                "long_term_memory_count": len(lt_memory_results),
+                "short_term_truncated": short_term_result.truncated if short_term_result else False,
+                "short_term_chars": short_term_result.total_chars if short_term_result else 0,
             }
 
         answer = str(state.get("final_answer", "") or "")
+        used_citations_raw = list(state.get("used_citations", []) or [])
+        used_citations = [_citation_item(item) for item in used_citations_raw]
+        used_citation_markers = list(state.get("used_citation_markers", []) or [])
+        invalid_citation_markers = list(state.get("invalid_citation_markers", []) or [])
+        citations_strings = list(state.get("citations", []) or [])
+
         assistant_message_id = ""
         if memory is not None:
             assistant = memory.record_assistant_message(
                 session_id=session_id,
                 answer=answer,
                 intent=str(state.get("intent", "") or ""),
-                citations=list(state.get("citations", []) or []),
+                citations=citations_strings,
                 debug=debug,
                 metadata={
                     "user_message_id": user_message_id,
                     "evidence_sufficient": bool(state.get("evidence_sufficient", False)),
+                    "used_citations": [item.model_dump() for item in used_citations_raw],
+                    "used_citation_markers": used_citation_markers,
+                    "invalid_citation_markers": invalid_citation_markers,
                     "errors": list(state.get("errors", []) or []),
                 },
             )
             assistant_message_id = assistant.message_id
+            # 更新短期状态
+            memory.update_short_term_state_after_turn(
+                session_id=session_id,
+                user_query=request.query,
+                assistant_answer=answer,
+                metadata={
+                    "short_term_truncated": short_term_result.truncated if short_term_result else False,
+                    "short_term_chars": short_term_result.total_chars if short_term_result else 0,
+                },
+            )
+            # 尝试写入长期记忆
+            if long_term_svc is not None:
+                try:
+                    long_term_svc.maybe_write_after_turn(
+                        session_id=session_id,
+                        user_message_id=user_message_id,
+                        assistant_message_id=assistant_message_id,
+                        user_query=request.query,
+                        assistant_answer=answer,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("长期记忆写入失败，跳过: %s", exc)
 
         return ChatResponse(
             answer=answer,
@@ -218,7 +283,10 @@ def create_app(config: Optional[FireAgentConfig] = None) -> object:
             message_id=assistant_message_id,
             intent=str(state.get("intent", "") or ""),
             evidence_sufficient=bool(state.get("evidence_sufficient", False)),
-            citations=list(state.get("citations", []) or []),
+            citations=citations_strings,
+            used_citations=used_citations,
+            used_citation_markers=used_citation_markers,
+            invalid_citation_markers=invalid_citation_markers,
             context=str(state.get("final_context", "") or "") if request.include_context else None,
             errors=list(state.get("errors", []) or []),
             debug=debug,
@@ -231,13 +299,28 @@ def create_app(config: Optional[FireAgentConfig] = None) -> object:
         """SSE 流式问答接口。"""
         def event_generator():
             memory = get_memory_service()
+            long_term_svc = get_long_term_memory_service()
             session_id = request.session_id or ""
             conversation_context = ""
+            long_term_memories = ""
+            short_term_result = None
+            user_message_id = ""
             if memory is not None:
                 session = memory.get_or_create_session(request.session_id, query=request.query)
                 session_id = session.session_id
-                conversation_context = memory.recent_context(session_id)
-                memory.record_user_message(session_id, request.query)
+                # 构建短期上下文（在保存当前用户消息之前）
+                short_term_result = memory.build_short_term_context(session_id, query=request.query)
+                conversation_context = short_term_result.text
+                # 检索长期记忆
+                lt_memory_results = []
+                if long_term_svc is not None:
+                    try:
+                        lt_memory_results = long_term_svc.retrieve_for_query(request.query)
+                        long_term_memories = long_term_svc.format_for_prompt(lt_memory_results)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("长期记忆检索失败，跳过: %s", exc)
+                user_msg = memory.record_user_message(session_id, request.query)
+                user_message_id = user_msg.message_id
 
             answer_parts: list[str] = []
             last_done: dict = {}
@@ -247,6 +330,7 @@ def create_app(config: Optional[FireAgentConfig] = None) -> object:
                 vectorstore=None,
                 session_id=session_id,
                 conversation_context=conversation_context,
+                long_term_memories=long_term_memories,
             ):
                 event_name, payload = _parse_sse_event(event_text)
                 if event_name == "token":
@@ -262,10 +346,35 @@ def create_app(config: Optional[FireAgentConfig] = None) -> object:
                             citations=list(payload.get("citations", []) or []),
                             metadata={
                                 "evidence_sufficient": bool(payload.get("evidence_sufficient", False)),
+                                "used_citations": list(payload.get("used_citations", []) or []),
+                                "used_citation_markers": list(payload.get("used_citation_markers", []) or []),
+                                "invalid_citation_markers": list(payload.get("invalid_citation_markers", []) or []),
                                 "fallback": payload.get("fallback", {}),
                             },
                         )
                         assistant_message_id = assistant.message_id
+                        # 更新短期状态
+                        memory.update_short_term_state_after_turn(
+                            session_id=session_id,
+                            user_query=request.query,
+                            assistant_answer="".join(answer_parts),
+                            metadata={
+                                "short_term_truncated": short_term_result.truncated if short_term_result else False,
+                                "short_term_chars": short_term_result.total_chars if short_term_result else 0,
+                            },
+                        )
+                        # 尝试写入长期记忆
+                        if long_term_svc is not None:
+                            try:
+                                long_term_svc.maybe_write_after_turn(
+                                    session_id=session_id,
+                                    user_message_id=user_message_id,
+                                    assistant_message_id=assistant_message_id,
+                                    user_query=request.query,
+                                    assistant_answer="".join(answer_parts),
+                                )
+                            except Exception as exc:  # noqa: BLE001
+                                logger.warning("长期记忆写入失败，跳过: %s", exc)
                     last_done["session_id"] = session_id
                     last_done["message_id"] = assistant_message_id
                     yield _format_sse_event("done", last_done)
@@ -462,6 +571,15 @@ def create_app(config: Optional[FireAgentConfig] = None) -> object:
 
 
 # ── 辅助函数 ──
+
+
+def _citation_item(citation: Any) -> CitationItem:
+    """把结构化引用转成 API 响应。"""
+    if hasattr(citation, "model_dump"):
+        return CitationItem(**citation.model_dump())
+    if isinstance(citation, dict):
+        return CitationItem(**citation)
+    raise TypeError(f"Unsupported citation type: {type(citation)}")
 
 
 def _session_item(session) -> SessionItem:

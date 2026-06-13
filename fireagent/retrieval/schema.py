@@ -91,12 +91,37 @@ class EvidenceItem(RetrievalModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class StructuredCitation(RetrievalModel):
+    """结构化引用，对应一条实际被模型使用过的证据。"""
+
+    citation_id: str
+    marker: str
+    source_type: str
+    title: str = ""
+    authors: list[str] = Field(default_factory=list)
+    year: Optional[int] = None
+    doc_id: str = ""
+    chunk_id: str = ""
+    parent_id: str = ""
+    section_title: str = ""
+    section_path: list[str] = Field(default_factory=list)
+    page_start: Optional[int] = None
+    page_end: Optional[int] = None
+    url: str = ""
+    score: float = 0.0
+    text_preview: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class ContextBuildResult(RetrievalModel):
     """上下文构建结果。"""
 
     final_context: str
     evidence_items: list[EvidenceItem] = Field(default_factory=list)
     citations: list[str] = Field(default_factory=list)
+    candidate_citations: list[StructuredCitation] = Field(default_factory=list)
+    used_citations: list[StructuredCitation] = Field(default_factory=list)
+    used_citation_markers: list[str] = Field(default_factory=list)
     total_chars: int = 0
 
 

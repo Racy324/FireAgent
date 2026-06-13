@@ -185,12 +185,45 @@ class EvaluationConfig(ConfigSection):
     fail_under: Optional[float] = None
 
 
+class ShortTermMemoryConfig(ConfigSection):
+    """短期上下文管理配置。"""
+
+    enabled: bool = True
+    recent_message_limit: int = Field(default=8, gt=0)
+    max_chars: int = Field(default=3500, gt=0)
+    rolling_summary_max_chars: int = Field(default=1500, gt=0)
+    summarize_after_messages: int = Field(default=20, gt=0)
+    intermediate_result_limit: int = Field(default=8, gt=0)
+    pinned_message_limit: int = Field(default=8, gt=0)
+
+
+class LongTermMemoryConfig(ConfigSection):
+    """长期记忆配置。"""
+
+    enabled: bool = True
+    collection: str = "fireagent_memories"
+    top_k: int = Field(default=5, gt=0)
+    max_prompt_chars: int = Field(default=1200, gt=0)
+    min_relevance_score: float = Field(default=0.35, ge=0.0, le=1.0)
+    write_enabled: bool = True
+    importance_threshold: float = Field(default=0.72, ge=0.0, le=1.0)
+    confidence_threshold: float = Field(default=0.65, ge=0.0, le=1.0)
+    max_candidates_per_turn: int = Field(default=2, gt=0)
+    default_half_life_days: float = Field(default=180.0, gt=0)
+    semantic_half_life_days: float = Field(default=365.0, gt=0)
+    episodic_half_life_days: float = Field(default=90.0, gt=0)
+    procedural_half_life_days: float = Field(default=365.0, gt=0)
+    dedup_similarity_threshold: float = Field(default=0.88, ge=0.0, le=1.0)
+
+
 class MemoryConfig(ConfigSection):
     """会话历史和记忆系统配置。"""
 
     enabled: bool = True
     database_path: str = "data/app/fireagent.db"
     recent_message_limit: int = Field(default=8, gt=0)
+    short_term: ShortTermMemoryConfig = Field(default_factory=ShortTermMemoryConfig)
+    long_term: LongTermMemoryConfig = Field(default_factory=LongTermMemoryConfig)
 
 
 class WebFallbackConfig(ConfigSection):

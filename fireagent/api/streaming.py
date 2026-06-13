@@ -12,6 +12,7 @@ from fireagent.graph.nodes import FireAgentGraphNodes, route_intent, generate_an
 from fireagent.graph.state import FireAgentState, create_initial_state
 from fireagent.llm import BaseLLMClient, LLMMessage
 from fireagent.prompts import PromptTemplateLoader
+from fireagent.retrieval.citation_utils import build_used_citation_result
 from fireagent.retrieval import (
     ContextBuilder,
     DenseRetriever,
@@ -44,6 +45,7 @@ def run_streaming_workflow(
     llm_client: Optional[BaseLLMClient] = None,
     session_id: str = "",
     conversation_context: str = "",
+    long_term_memories: str = "",
 ) -> Generator[str, None, None]:
     """流式运行 FireAgent 工作流，逐阶段返回 SSE 事件。
 
@@ -54,6 +56,7 @@ def run_streaming_workflow(
         user_query,
         session_id=session_id,
         conversation_context=conversation_context,
+        long_term_memories=long_term_memories,
     )
     start_time = time.time()
 
@@ -74,6 +77,9 @@ def run_streaming_workflow(
             yield _sse_event("token", {"token": char})
         yield _sse_event("done", {
             "citations": [],
+            "used_citations": [],
+            "used_citation_markers": [],
+            "invalid_citation_markers": [],
             "intent": intent,
             "evidence_sufficient": False,
             "elapsed": round(time.time() - start_time, 2),
@@ -152,6 +158,9 @@ def run_streaming_workflow(
             yield _sse_event("token", {"token": char})
         yield _sse_event("done", {
             "citations": [],
+            "used_citations": [],
+            "used_citation_markers": [],
+            "invalid_citation_markers": [],
             "intent": intent,
             "evidence_sufficient": False,
             "safety_notice": str(state.get("safety_notice", "") or ""),
@@ -166,6 +175,9 @@ def run_streaming_workflow(
             yield _sse_event("token", {"token": char})
         yield _sse_event("done", {
             "citations": [],
+            "used_citations": [],
+            "used_citation_markers": [],
+            "invalid_citation_markers": [],
             "intent": intent,
             "evidence_sufficient": False,
             "fallback": {"action": fallback_decision.action.value, "reason": fallback_decision.reason},
@@ -179,6 +191,9 @@ def run_streaming_workflow(
             yield _sse_event("token", {"token": char})
         yield _sse_event("done", {
             "citations": [],
+            "used_citations": [],
+            "used_citation_markers": [],
+            "invalid_citation_markers": [],
             "intent": intent,
             "evidence_sufficient": False,
             "fallback": {"action": fallback_decision.action.value, "reason": fallback_decision.reason},
@@ -216,18 +231,20 @@ def run_streaming_workflow(
     context_result = context_builder.build(reranked, query=rewrite_result.main_query)
     state["context_result"] = context_result
     state["final_context"] = context_result.final_context
-    state["citations"] = context_result.citations
+    state["candidate_citations"] = context_result.candidate_citations
+    candidate_citations = list(context_result.candidate_citations or [])
     yield _sse_event("stage", {"stage": "context", "evidence_count": len(context_result.evidence_items)})
 
     # ── 9. 流式 LLM 回答 ──
     final_context = context_result.final_context or ""
-    citations = list(context_result.citations or [])
+    answer_parts: list[str] = []
 
     if not final_context or not cfg.llm.enabled:
         fallback_answer = generate_answer_from_state(state)
         for char in fallback_answer:
             yield _sse_event("token", {"token": char})
         state["final_answer"] = fallback_answer
+        answer_parts.append(fallback_answer)
     else:
         prompt_loader = PromptTemplateLoader(config=cfg)
         prompt = prompt_loader.render(
@@ -235,8 +252,8 @@ def run_streaming_workflow(
             user_query=user_query,
             intent=intent,
             conversation_context=conversation_context,
+            long_term_memories=long_term_memories,
             final_context=final_context,
-            citations="\n".join(str(c) for c in citations),
             safety_notice=str(state.get("safety_notice", "") or ""),
         )
 
@@ -253,15 +270,24 @@ def run_streaming_workflow(
                 ),
                 LLMMessage(role="user", content=prompt),
             ]):
+                answer_parts.append(token)
                 yield _sse_event("token", {"token": token})
         except Exception as exc:  # noqa: BLE001
             fallback_answer = generate_answer_from_state(state)
             for char in fallback_answer:
                 yield _sse_event("token", {"token": char})
             state["final_answer"] = fallback_answer
+            answer_parts.append(fallback_answer)
             state["errors"] = [f"LLM 流式调用失败，已回退模板回答：{exc}"]
 
-    # ── 10. 完成 ──
+    # ── 10. 解析 used citations ──
+    full_answer = "".join(answer_parts)
+    markers, used, used_strings, invalid = build_used_citation_result(
+        full_answer,
+        candidate_citations,
+    )
+
+    # ── 11. 完成 ──
     fallback_info = {}
     fd = state.get("fallback_decision")
     if fd is not None:
@@ -271,7 +297,10 @@ def run_streaming_workflow(
             "reason": getattr(fd, "reason", ""),
         }
     yield _sse_event("done", {
-        "citations": citations,
+        "citations": used_strings,
+        "used_citations": [item.model_dump() for item in used],
+        "used_citation_markers": markers,
+        "invalid_citation_markers": invalid,
         "intent": intent,
         "evidence_sufficient": bool(state.get("evidence_sufficient", False)),
         "safety_notice": str(state.get("safety_notice", "") or ""),

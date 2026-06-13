@@ -44,6 +44,11 @@ class EvaluationPrediction(EvaluationModel):
     # Fallback 决策字段
     fallback_action: str = ""
     fallback_reason: str = ""
+    # Used citation 字段
+    used_citation_markers: list[str] = Field(default_factory=list)
+    invalid_citation_markers: list[str] = Field(default_factory=list)
+    candidate_citation_count: int = 0
+    used_citation_count: int = 0
 
 
 class ManualScore(EvaluationModel):

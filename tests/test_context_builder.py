@@ -75,12 +75,14 @@ def test_context_builder_dedupes_and_merges_adjacent_parent_chunks() -> None:
 
     assert len(result.evidence_items) == 1
     evidence = result.evidence_items[0]
-    assert evidence.evidence_id == "本地论文证据1"
+    assert evidence.evidence_id == "L1"
     assert evidence.page_start == 1
     assert evidence.page_end == 2
     assert "降低能见度" in evidence.text
     assert "一氧化碳" in evidence.text
-    assert result.citations[0].startswith("本地论文证据1")
+    assert "[L1]" in result.final_context
+    assert result.candidate_citations[0].marker == "[L1]"
+    assert result.citations[0].startswith("[L1]")
 
 
 def test_context_builder_separates_local_and_web_evidence() -> None:
@@ -93,11 +95,13 @@ def test_context_builder_separates_local_and_web_evidence() -> None:
     result = ContextBuilder(max_context_chars=2000, max_evidence_chars=300).build(candidates)
 
     evidence_ids = [item.evidence_id for item in result.evidence_items]
-    assert "联网资料证据1" in evidence_ids
-    assert "本地论文证据1" in evidence_ids
+    assert "W1" in evidence_ids
+    assert "L1" in evidence_ids
     assert any("https://example.com/std" in citation for citation in result.citations)
-    assert "联网资料证据1" in result.final_context
-    assert "本地论文证据1" in result.final_context
+    assert "[W1]" in result.final_context
+    assert "[L1]" in result.final_context
+    assert result.candidate_citations[0].marker == "[W1]"
+    assert result.candidate_citations[1].marker == "[L1]"
 
 
 def test_context_builder_uses_parent_text_when_available() -> None:

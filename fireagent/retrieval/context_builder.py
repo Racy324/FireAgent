@@ -7,7 +7,12 @@ import hashlib
 from collections import defaultdict
 from typing import Optional
 
-from fireagent.retrieval.schema import ContextBuildResult, EvidenceItem, RerankedRetrievalResult
+from fireagent.retrieval.schema import (
+    ContextBuildResult,
+    EvidenceItem,
+    RerankedRetrievalResult,
+    StructuredCitation,
+)
 from fireagent.utils.config import FireAgentConfig, get_config
 
 
@@ -45,11 +50,11 @@ class ContextBuilder:
             text = self._compress_text(item.text, self.max_evidence_chars)
             if self._is_web_source(item.source_type):
                 web_index += 1
-                label = f"联网资料证据{web_index}"
+                citation_id = f"W{web_index}"
             else:
                 local_index += 1
-                label = f"本地论文证据{local_index}"
-            item.evidence_id = label
+                citation_id = f"L{local_index}"
+            item.evidence_id = citation_id
             item.text = text
             item.citation = self._build_citation(item)
 
@@ -60,11 +65,14 @@ class ContextBuilder:
             total_chars += len(block)
             selected.append(item)
 
-        citations = [item.citation for item in selected if item.citation]
+        candidate_citations = [self._build_structured_citation(item) for item in selected]
+        candidate_citation_strings = [self._citation_to_string(sc) for sc in candidate_citations]
+
         return ContextBuildResult(
             final_context="\n\n".join(context_parts),
             evidence_items=selected,
-            citations=citations,
+            citations=candidate_citation_strings,
+            candidate_citations=candidate_citations,
             total_chars=total_chars,
         )
 
@@ -178,12 +186,27 @@ class ContextBuilder:
     def _format_evidence_block(self, item: EvidenceItem) -> str:
         """格式化上下文中的单条证据。"""
         page_text = self._page_text(item.page_start, item.page_end)
-        source = item.citation or item.paper_title or item.doc_id or item.source_type
+        source = self._source_label(item)
         return (
             f"[{item.evidence_id}]\n"
             f"来源：{source}\n"
             f"章节：{item.section_title or '未知'}；页码：{page_text}；分数：{item.score:.4f}\n"
             f"正文：{item.text}"
+        )
+
+    def _source_label(self, item: EvidenceItem) -> str:
+        """生成来源描述文本。"""
+        if self._is_web_source(item.source_type):
+            title = item.paper_title or item.metadata.get("title") or item.metadata.get("url") or "联网资料"
+            url = item.metadata.get("url", "")
+            return f"{title}{f' ({url})' if url else ''}"
+
+        author_text = "、".join(item.authors) if item.authors else "作者未知"
+        year_text = str(item.year) if item.year else "年份未知"
+        page_text = self._page_text(item.page_start, item.page_end)
+        return (
+            f"{item.paper_title or '题名未知'}，{author_text}，"
+            f"{year_text}，{item.section_title or '章节未知'}，{page_text}"
         )
 
     def _build_citation(self, item: EvidenceItem) -> str:
@@ -199,6 +222,50 @@ class ContextBuilder:
         return (
             f"{item.evidence_id}: {item.paper_title or '题名未知'}，{author_text}，"
             f"{year_text}，{item.section_title or '章节未知'}，{page_text}"
+        )
+
+    def _build_structured_citation(self, item: EvidenceItem) -> StructuredCitation:
+        """从 EvidenceItem 构建结构化引用。"""
+        is_web = self._is_web_source(item.source_type)
+        title = (
+            item.paper_title
+            or item.metadata.get("title")
+            or item.metadata.get("url")
+            or ("联网资料" if is_web else "题名未知")
+        )
+        return StructuredCitation(
+            citation_id=item.evidence_id,
+            marker=f"[{item.evidence_id}]",
+            source_type=item.source_type,
+            title=title,
+            authors=item.authors,
+            year=item.year,
+            doc_id=item.doc_id,
+            chunk_id=item.chunk_id,
+            parent_id=item.parent_id,
+            section_title=item.section_title,
+            section_path=item.section_path,
+            page_start=item.page_start,
+            page_end=item.page_end,
+            url=str(item.metadata.get("url", "")),
+            score=item.score,
+            text_preview=item.text[:300],
+            metadata=item.metadata,
+        )
+
+    @staticmethod
+    def _citation_to_string(citation: StructuredCitation) -> str:
+        """将结构化引用转为兼容字符串。"""
+        if citation.source_type.lower().startswith("web"):
+            suffix = f" ({citation.url})" if citation.url else ""
+            return f"{citation.marker}: {citation.title}{suffix}"
+
+        author_text = "、".join(citation.authors) if citation.authors else "作者未知"
+        year_text = str(citation.year) if citation.year else "年份未知"
+        page_text = ContextBuilder._page_text(citation.page_start, citation.page_end)
+        return (
+            f"{citation.marker}: {citation.title or '题名未知'}，{author_text}，"
+            f"{year_text}，{citation.section_title or '章节未知'}，{page_text}"
         )
 
     @staticmethod

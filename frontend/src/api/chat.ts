@@ -1,12 +1,15 @@
 import { API_BASE_URL } from './client'
 import api from './client'
-import type { SessionItem, SessionMessagesResponse, SessionsListResponse, SSEStageEvent } from './types'
+import type { CitationItem, SessionItem, SessionMessagesResponse, SessionsListResponse, SSEStageEvent } from './types'
 
 export interface StreamCallbacks {
   onStage?: (event: SSEStageEvent) => void
   onToken?: (token: string) => void
   onDone?: (data: {
     citations: string[]
+    used_citations?: CitationItem[]
+    used_citation_markers?: string[]
+    invalid_citation_markers?: string[]
     session_id?: string
     message_id?: string
     intent: string

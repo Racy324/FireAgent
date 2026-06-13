@@ -9,6 +9,7 @@ from typing import Optional
 from fireagent.graph.state import FireAgentState, state_get_query
 from fireagent.llm import BaseLLMClient, LLMMessage, create_llm_client
 from fireagent.prompts import PromptTemplateLoader
+from fireagent.retrieval.citation_utils import build_used_citation_result
 from fireagent.retrieval import (
     ContextBuilder,
     DenseRetriever,
@@ -234,6 +235,7 @@ class FireAgentGraphNodes:
             context_result=context_result,
             final_context=context_result.final_context,
             citations=context_result.citations,
+            candidate_citations=context_result.candidate_citations,
         )
 
     def answer_generate_node(self, state: FireAgentState) -> FireAgentState:
@@ -254,18 +256,36 @@ class FireAgentGraphNodes:
             if action == FallbackAction.REFUSE:
                 return FireAgentState(
                     final_answer="抱歉，我无法回答涉及纵火、规避消防检查等危险行为的问题。如遇火灾紧急情况，请立即拨打 119。",
+                    citations=[],
+                    used_citations=[],
+                    used_citation_markers=[],
+                    invalid_citation_markers=[],
                 )
             if action == FallbackAction.ANSWER_INSUFFICIENT:
                 return FireAgentState(
                     final_answer=f"当前知识库中没有找到足够的本地论文证据来回答该问题。{f'（原因：{reason}）' if reason else ''}",
+                    citations=[],
+                    used_citations=[],
+                    used_citation_markers=[],
+                    invalid_citation_markers=[],
                 )
             if action == FallbackAction.ASK_CLARIFY:
                 return FireAgentState(
                     final_answer="这个问题里的指代还不够明确。请补充具体论文、事故、标准名称，或说明你希望我基于哪一批本地资料回答。",
+                    citations=[],
+                    used_citations=[],
+                    used_citation_markers=[],
+                    invalid_citation_markers=[],
                 )
 
         if intent in {"chat", "reject"} or not final_context or not self.context.config.llm.enabled:
-            return FireAgentState(final_answer=fallback_answer)
+            return FireAgentState(
+                final_answer=fallback_answer,
+                citations=[],
+                used_citations=[],
+                used_citation_markers=[],
+                invalid_citation_markers=[],
+            )
 
         try:
             prompt = self.prompt_loader.render(
@@ -273,8 +293,8 @@ class FireAgentGraphNodes:
                 user_query=state_get_query(state),
                 intent=intent,
                 conversation_context=str(state.get("conversation_context", "") or ""),
+                long_term_memories=str(state.get("long_term_memories", "") or ""),
                 final_context=final_context,
-                citations="\n".join(str(citation) for citation in state.get("citations", []) or []),
                 safety_notice=str(state.get("safety_notice", "") or ""),
             )
             response = self.llm_client.generate(
@@ -286,10 +306,25 @@ class FireAgentGraphNodes:
                     LLMMessage(role="user", content=prompt),
                 ]
             )
-            return FireAgentState(final_answer=response.content)
+            answer = response.content.strip()
+            markers, used, used_strings, invalid = build_used_citation_result(
+                answer,
+                list(state.get("candidate_citations", []) or []),
+            )
+            return FireAgentState(
+                final_answer=answer,
+                citations=used_strings,
+                used_citation_markers=markers,
+                used_citations=used,
+                invalid_citation_markers=invalid,
+            )
         except Exception as exc:  # noqa: BLE001 - LLM 失败时回退模板回答。
             return FireAgentState(
                 final_answer=fallback_answer,
+                citations=[],
+                used_citations=[],
+                used_citation_markers=[],
+                invalid_citation_markers=[],
                 errors=[f"answer_generate_node LLM 回退：{exc}"],
             )
 

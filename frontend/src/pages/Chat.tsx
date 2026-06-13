@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import { useChatStore } from '../stores/chatStore'
 import MarkdownRenderer from '../components/MarkdownRenderer'
-import type { ChatMessage, SessionItem, SSEStageEvent } from '../api/types'
+import type { ChatMessage, CitationItem, SessionItem, SSEStageEvent } from '../api/types'
 import { formatElapsed } from '../utils/format'
 
 const STAGE_LABELS: Record<string, string> = {
@@ -342,36 +342,46 @@ function AssistantBubble({ message }: { message: ChatMessage }) {
       )}
 
       {/* 引用来源 */}
-      {message.citations && message.citations.length > 0 && (
-        <div>
-          <button
-            onClick={() => setShowCitations(!showCitations)}
-            className="flex items-center gap-1.5 text-[10px] text-gray-500 hover:text-gray-400 transition-colors"
-          >
-            <BookOpen size={12} />
-            {showCitations ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-            引用来源 ({message.citations.length})
-          </button>
-          <AnimatePresence>
-            {showCitations && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                className="overflow-hidden"
-              >
-                <div className="mt-2 space-y-1">
-                  {message.citations.map((cite, i) => (
-                    <div key={i} className="text-[11px] text-gray-400 pl-3 border-l border-fire-500/20 py-0.5">
-                      {cite}
-                    </div>
-                  ))}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-      )}
+      {(() => {
+        const hasUsed = message.used_citations && message.used_citations.length > 0
+        const hasLegacy = message.citations && message.citations.length > 0
+        if (!hasUsed && !hasLegacy) return null
+        const citeCount = hasUsed ? message.used_citations!.length : message.citations!.length
+        return (
+          <div>
+            <button
+              onClick={() => setShowCitations(!showCitations)}
+              className="flex items-center gap-1.5 text-[10px] text-gray-500 hover:text-gray-400 transition-colors"
+            >
+              <BookOpen size={12} />
+              {showCitations ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              引用来源 ({citeCount})
+            </button>
+            <AnimatePresence>
+              {showCitations && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="overflow-hidden"
+                >
+                  <div className="mt-2 space-y-1.5">
+                    {hasUsed
+                      ? message.used_citations!.map((cite) => (
+                          <CitationCard key={cite.citation_id} citation={cite} />
+                        ))
+                      : message.citations!.map((cite, i) => (
+                          <div key={i} className="text-[11px] text-gray-400 pl-3 border-l border-fire-500/20 py-0.5">
+                            {cite}
+                          </div>
+                        ))}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )
+      })()}
     </div>
   )
 }
@@ -391,5 +401,42 @@ function StageTag({ stage }: { stage: SSEStageEvent }) {
     <span className="text-[10px] px-2 py-0.5 rounded-full bg-bg-tertiary text-gray-400 border border-white/5">
       {label}{detail ? ` · ${detail}` : ''}
     </span>
+  )
+}
+
+/** 结构化引用卡片 */
+function CitationCard({ citation }: { citation: CitationItem }) {
+  const isWeb = citation.source_type.startsWith('web')
+  const pageText = citation.page_start
+    ? citation.page_end && citation.page_end !== citation.page_start
+      ? `第${citation.page_start}-${citation.page_end}页`
+      : `第${citation.page_start}页`
+    : ''
+
+  return (
+    <div className="text-[11px] pl-3 border-l border-fire-500/20 py-1 space-y-0.5">
+      <div className="flex items-center gap-1.5">
+        <span className="font-mono text-fire-400 font-semibold">{citation.marker}</span>
+        <span className="text-gray-300">{citation.title || '题名未知'}</span>
+      </div>
+      {!isWeb && (
+        <div className="text-gray-500">
+          {citation.authors.length > 0 ? citation.authors.join('、') : '作者未知'}
+          {citation.year ? `，${citation.year}` : ''}
+          {citation.section_title ? `，${citation.section_title}` : ''}
+          {pageText ? `，${pageText}` : ''}
+        </div>
+      )}
+      {isWeb && citation.url && (
+        <a
+          href={citation.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-fire-400 hover:text-fire-300 underline underline-offset-2 truncate block max-w-full"
+        >
+          {citation.url}
+        </a>
+      )}
+    </div>
   )
 }
