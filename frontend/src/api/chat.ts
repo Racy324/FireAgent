@@ -1,11 +1,14 @@
 import { API_BASE_URL } from './client'
-import type { SSEStageEvent } from './types'
+import api from './client'
+import type { SessionItem, SessionMessagesResponse, SessionsListResponse, SSEStageEvent } from './types'
 
 export interface StreamCallbacks {
   onStage?: (event: SSEStageEvent) => void
   onToken?: (token: string) => void
   onDone?: (data: {
     citations: string[]
+    session_id?: string
+    message_id?: string
     intent: string
     evidence_sufficient: boolean
     safety_notice?: string
@@ -17,14 +20,18 @@ export interface StreamCallbacks {
 /**
  * 发送流式问答请求，通过 SSE 逐 token 接收回答。
  */
-export function sendStreamChat(query: string, callbacks: StreamCallbacks): AbortController {
+export function sendStreamChat(
+  query: string,
+  sessionId: string | undefined,
+  callbacks: StreamCallbacks,
+): AbortController {
   const controller = new AbortController()
   const streamUrl = `${API_BASE_URL}/chat/stream`
 
   fetch(streamUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query }),
+    body: JSON.stringify({ query, session_id: sessionId }),
     signal: controller.signal,
   })
     .then(async (response) => {
@@ -82,4 +89,23 @@ export function sendStreamChat(query: string, callbacks: StreamCallbacks): Abort
     })
 
   return controller
+}
+
+export async function listSessions(): Promise<SessionItem[]> {
+  const response = await api.get<SessionsListResponse>('/sessions')
+  return response.data.sessions
+}
+
+export async function createSession(title = ''): Promise<SessionItem> {
+  const response = await api.post<SessionItem>('/sessions', { title })
+  return response.data
+}
+
+export async function deleteSession(sessionId: string): Promise<void> {
+  await api.delete(`/sessions/${sessionId}`)
+}
+
+export async function listSessionMessages(sessionId: string): Promise<SessionMessagesResponse> {
+  const response = await api.get<SessionMessagesResponse>(`/sessions/${sessionId}/messages`)
+  return response.data
 }

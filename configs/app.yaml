@@ -33,8 +33,14 @@ retrieval:
   sufficiency_min_score: 0.18
   sufficiency_min_evidence: 2
   sufficiency_min_term_coverage: 0.30
+  cross_doc_min_docs: 2
 
 web:
+  force_web_temporal: true
+  force_web_official: true
+  disable_for_local_scope: true
+  disable_for_harmful: true
+  ask_clarify_for_ambiguous: true
   temporal_keywords:
     - 最新
     - 政策
@@ -45,6 +51,47 @@ web:
     - "2026"
     - 今年
     - 最近
+    - 现行
+    - 当前
+    - 近期
+    - 刚发布
+    - 现在
+  official_keywords:
+    - 标准
+    - 规范
+    - 法规
+    - 政策
+    - 官方
+    - 通报
+    - 统计
+    - 应急管理部
+    - 消防救援局
+    - GB
+    - 现行版本
+  local_scope_keywords:
+    - 根据本地知识库
+    - 仅基于知识库
+    - 只看上传文档
+    - 根据这些论文
+    - 这批论文
+    - 根据论文
+    - 仅根据本地
+  harmful_keywords:
+    - 纵火
+    - 制造火灾
+    - 规避消防
+    - 绕过报警
+    - 破坏灭火
+    - 提高火灾破坏
+    - 如何放火
+    - 怎么纵火
+  ambiguous_keywords:
+    - 那个
+    - 这个
+    - 这篇
+    - 它
+    - 上述
+    - 前面提到
 
 tavily:
   api_key: ""
@@ -63,3 +110,8 @@ evaluation:
   output_dir: data/eval/runs
   default_mode: manual
   fail_under:
+
+memory:
+  enabled: true
+  database_path: data/app/fireagent.db
+  recent_message_limit: 8

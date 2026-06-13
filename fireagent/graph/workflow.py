@@ -85,8 +85,16 @@ def run_fireagent_workflow(
     config: Optional[FireAgentConfig] = None,
     vectorstore: Optional[FireAgentQdrantClient] = None,
     llm_client: Optional[BaseLLMClient] = None,
+    session_id: str = "",
+    conversation_context: str = "",
 ) -> FireAgentState:
     """便捷函数：编译并运行 FireAgent 工作流。"""
     workflow = build_fireagent_workflow(config=config, vectorstore=vectorstore, llm_client=llm_client)
-    result = workflow.invoke(create_initial_state(user_query))
+    result = workflow.invoke(
+        create_initial_state(
+            user_query,
+            session_id=session_id,
+            conversation_context=conversation_context,
+        )
+    )
     return FireAgentState(**dict(result))

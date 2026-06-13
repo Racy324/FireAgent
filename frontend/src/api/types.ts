@@ -9,6 +9,8 @@ export interface ChatRequest {
 
 export interface ChatResponse {
   answer: string
+  session_id: string
+  message_id: string
   intent: string
   evidence_sufficient: boolean
   citations: string[]
@@ -72,14 +74,44 @@ export interface SSETokenEvent {
 
 export interface SSEDoneEvent {
   citations: string[]
+  session_id?: string
+  message_id?: string
   intent: string
   evidence_sufficient: boolean
   safety_notice?: string
   elapsed?: number
 }
 
+export interface SessionItem {
+  session_id: string
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+export interface SessionsListResponse {
+  sessions: SessionItem[]
+}
+
+export interface MessageItem {
+  message_id: string
+  session_id: string
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  created_at: string
+  intent?: string
+  citations?: string[]
+  metadata?: Record<string, unknown>
+}
+
+export interface SessionMessagesResponse {
+  session_id: string
+  messages: MessageItem[]
+}
+
 export interface ChatMessage {
   id: string
+  session_id?: string
   role: 'user' | 'assistant'
   content: string
   citations?: string[]

@@ -39,9 +39,14 @@ htmlcov/
 log.txt
 *.log
 data/logs/
+data/app/
 data/raw_pdfs/
 data/parsed/
 data/chunks/
+data/eval/runs/
+*.db
+*.sqlite
+*.sqlite3
 
 # ──────────────────────────────────────
 # 模型文件（体积大，不上传）

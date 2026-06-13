@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+import fireagent.evaluation.runner as runner_module
 from fireagent.evaluation import (
     EvaluationCase,
     EvaluationPrediction,
@@ -11,6 +12,7 @@ from fireagent.evaluation import (
     RAGEvaluationRunner,
     load_evaluation_cases,
 )
+from fireagent.retrieval import FallbackAction, FallbackDecision, SufficiencyResult
 
 
 def test_manual_evaluator_scores_keyword_and_citation() -> None:
@@ -75,6 +77,124 @@ def test_evaluation_runner_writes_reports(tmp_path) -> None:
     assert (tmp_path / "runs").exists()
     assert summary.prediction_path.endswith("predictions.jsonl")
     assert summary.manual_report_path.endswith("manual_review.csv")
+
+
+def test_evaluation_runner_uses_tqdm_progress_when_available(monkeypatch) -> None:
+    """生成预测时应优先使用 tqdm 展示进度条。"""
+    calls: list[dict[str, object]] = []
+
+    def fake_tqdm(items, **kwargs):
+        calls.append(kwargs)
+        yield from items
+
+    monkeypatch.setattr(runner_module, "_tqdm", fake_tqdm)
+    cases = [
+        EvaluationCase(case_id="case-1", question="问题 1"),
+        EvaluationCase(case_id="case-2", question="问题 2"),
+    ]
+
+    def fake_answer(case: EvaluationCase) -> EvaluationPrediction:
+        return EvaluationPrediction(
+            case_id=case.case_id,
+            question=case.question,
+            answer="测试答案",
+        )
+
+    predictions = RAGEvaluationRunner(answer_fn=fake_answer).generate_predictions(cases)
+
+    assert len(predictions) == 2
+    assert calls == [
+        {
+            "total": 2,
+            "desc": "生成预测",
+            "unit": "题",
+            "dynamic_ncols": True,
+        }
+    ]
+
+
+def test_evaluation_runner_prints_plain_progress_without_tqdm(monkeypatch, capsys) -> None:
+    """缺少 tqdm 时应退化为 stderr 文本进度，避免评估静默卡住。"""
+    monkeypatch.setattr(runner_module, "_tqdm", None)
+    cases = [
+        EvaluationCase(case_id="case-1", question="问题 1"),
+        EvaluationCase(case_id="case-2", question="问题 2"),
+    ]
+
+    def fake_answer(case: EvaluationCase) -> EvaluationPrediction:
+        return EvaluationPrediction(
+            case_id=case.case_id,
+            question=case.question,
+            answer="测试答案",
+        )
+
+    predictions = RAGEvaluationRunner(answer_fn=fake_answer).generate_predictions(cases)
+
+    assert len(predictions) == 2
+    captured = capsys.readouterr()
+    assert "生成预测 1/2: case-1" in captured.err
+    assert "生成预测 2/2: case-2" in captured.err
+
+
+def test_evaluation_runner_records_sufficiency_and_fallback_metadata(monkeypatch) -> None:
+    """生成预测时应把 sufficiency 与 fallback 决策写入 prediction。"""
+
+    class FakeWorkflow:
+        def invoke(self, _state):
+            return {
+                "final_answer": "测试答案",
+                "final_context": "测试上下文",
+                "citations": ["证据 1"],
+                "intent": "rag",
+                "evidence_sufficient": False,
+                "errors": [],
+                "hallucination_warnings": [],
+                "sufficiency_result": SufficiencyResult(
+                    sufficient=False,
+                    needs_web=True,
+                    reason="top_score_below_threshold",
+                    top_score=0.1,
+                    evidence_count=1,
+                    metadata={"term_coverage": 0.2},
+                ),
+                "fallback_decision": FallbackDecision(
+                    action=FallbackAction.USE_WEB,
+                    reason="local_evidence_insufficient_and_web_allowed",
+                ),
+            }
+
+    monkeypatch.setattr(runner_module, "build_fireagent_workflow", lambda **_kwargs: FakeWorkflow())
+
+    case = EvaluationCase(case_id="case-1", question="最新消防标准是什么？")
+    prediction = RAGEvaluationRunner().generate_predictions([case], show_progress=False)[0]
+
+    assert prediction.fallback_action == "use_web"
+    assert prediction.fallback_reason == "local_evidence_insufficient_and_web_allowed"
+    assert prediction.metadata["web_triggered"] is True
+    assert prediction.metadata["sufficiency"]["reason"] == "top_score_below_threshold"
+
+
+def test_manual_evaluator_scores_fallback_decision() -> None:
+    """人工评估应标记 fallback 动作是否符合期望。"""
+    case = EvaluationCase(
+        case_id="case-web",
+        question="最新消防政策是什么？",
+        metadata={"question_type": "web_fallback"},
+    )
+    prediction = EvaluationPrediction(
+        case_id=case.case_id,
+        question=case.question,
+        answer="测试答案",
+        fallback_action="answer_local",
+        evidence_sufficient=True,
+    )
+
+    score = ManualRAGEvaluator().score_case(case, prediction)
+
+    assert score.expected_action == "use_web"
+    assert score.actual_action == "answer_local"
+    assert score.fallback_correct is False
+    assert score.missed_web is True
 
 
 def test_load_sample_eval_dataset() -> None:

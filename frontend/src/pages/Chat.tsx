@@ -1,10 +1,21 @@
 import { useState, useRef, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Send, Trash2, BookOpen, AlertTriangle, Clock, ChevronDown, ChevronUp } from 'lucide-react'
+import {
+  Send,
+  Trash2,
+  BookOpen,
+  AlertTriangle,
+  Clock,
+  ChevronDown,
+  ChevronUp,
+  Plus,
+  MessageSquare,
+  X,
+} from 'lucide-react'
 import { useChatStore } from '../stores/chatStore'
 import MarkdownRenderer from '../components/MarkdownRenderer'
-import type { ChatMessage, SSEStageEvent } from '../api/types'
+import type { ChatMessage, SessionItem, SSEStageEvent } from '../api/types'
 import { formatElapsed } from '../utils/format'
 
 const STAGE_LABELS: Record<string, string> = {
@@ -20,11 +31,27 @@ const STAGE_LABELS: Record<string, string> = {
 
 export default function Chat() {
   const [searchParams] = useSearchParams()
-  const { messages, isStreaming, sendMessage, clearMessages } = useChatStore()
+  const {
+    sessions,
+    currentSessionId,
+    messages,
+    isStreaming,
+    isLoadingSessions,
+    loadSessions,
+    selectSession,
+    newSession,
+    deleteSession,
+    sendMessage,
+    clearMessages,
+  } = useChatStore()
   const [input, setInput] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const hasSentInitialQuery = useRef(false)
+
+  useEffect(() => {
+    void loadSessions()
+  }, [loadSessions])
 
   // 从 URL 参数自动发送问题
   useEffect(() => {
@@ -64,77 +91,176 @@ export default function Chat() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)]">
-      {/* 顶栏 */}
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-bold fire-text">💬 智能问答</h1>
-        {messages.length > 0 && (
-          <button
-            onClick={clearMessages}
-            className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-300 transition-colors px-3 py-1.5 rounded-lg hover:bg-white/5"
-          >
-            <Trash2 size={14} /> 清空对话
-          </button>
-        )}
-      </div>
+    <div className="flex h-[calc(100vh-4rem)] gap-4">
+      <SessionSidebar
+        sessions={sessions}
+        currentSessionId={currentSessionId}
+        isLoading={isLoadingSessions}
+        onNew={newSession}
+        onSelect={(sessionId) => void selectSession(sessionId)}
+        onDelete={(sessionId) => void deleteSession(sessionId)}
+      />
 
-      {/* 消息区域 */}
-      <div className="flex-1 overflow-y-auto space-y-4 pb-4 pr-1">
-        {messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-center">
-            <div className="text-5xl mb-4">🔥</div>
-            <h2 className="text-xl font-bold text-gray-300 mb-2">你好，我是 FireAgent</h2>
-            <p className="text-sm text-gray-500 max-w-md">
-              火灾领域知识问答助手，基于 69 篇火灾论文提供有据可查的回答。
-              输入你的问题开始对话。
-            </p>
-          </div>
-        )}
-
-        <AnimatePresence>
-          {messages.map((msg) => (
-            <motion.div
-              key={msg.id}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* 顶栏 */}
+        <div className="flex items-center justify-between mb-4">
+          <h1 className="text-2xl font-bold fire-text">💬 智能问答</h1>
+          {messages.length > 0 && (
+            <button
+              onClick={clearMessages}
+              className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-300 transition-colors px-3 py-1.5 rounded-lg hover:bg-white/5"
             >
-              <div className={`max-w-[85%] ${msg.role === 'user' ? '' : 'w-full'}`}>
-                {msg.role === 'user' ? (
-                  <div className="bg-fire-500/20 text-fire-100 px-4 py-3 rounded-2xl rounded-tr-md text-sm leading-relaxed">
-                    {msg.content}
-                  </div>
-                ) : (
-                  <AssistantBubble message={msg} />
-                )}
-              </div>
-            </motion.div>
-          ))}
-        </AnimatePresence>
-        <div ref={messagesEndRef} />
-      </div>
+              <Trash2 size={14} /> 新建空会话
+            </button>
+          )}
+        </div>
 
-      {/* 输入区 */}
-      <div className="glass-card p-3 flex items-end gap-2 mt-2">
-        <textarea
-          ref={inputRef}
-          rows={1}
-          value={input}
-          onChange={handleInput}
-          onKeyDown={handleKeyDown}
-          placeholder="输入你的问题... (Shift+Enter 换行)"
-          className="flex-1 bg-transparent outline-none text-sm text-gray-200 placeholder:text-gray-500 resize-none py-2 px-2 max-h-[120px]"
-        />
-        <button
-          onClick={handleSend}
-          disabled={!input.trim() || isStreaming}
-          className="p-2.5 bg-gradient-to-r from-fire-500 to-fire-600 text-white rounded-xl hover:from-fire-400 hover:to-fire-500 transition-all disabled:opacity-30 disabled:cursor-not-allowed active:scale-95 flex-shrink-0"
-        >
-          <Send size={18} />
-        </button>
+        {/* 消息区域 */}
+        <div className="flex-1 overflow-y-auto space-y-4 pb-4 pr-1">
+          {messages.length === 0 && (
+            <div className="flex flex-col items-center justify-center h-full text-center">
+              <div className="text-5xl mb-4">🔥</div>
+              <h2 className="text-xl font-bold text-gray-300 mb-2">你好，我是 FireAgent</h2>
+              <p className="text-sm text-gray-500 max-w-md">
+                火灾领域知识问答助手，基于 69 篇火灾论文提供有据可查的回答。
+                输入你的问题开始对话。
+              </p>
+            </div>
+          )}
+
+          <AnimatePresence>
+            {messages.map((msg) => (
+              <motion.div
+                key={msg.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+              >
+                <div className={`max-w-[85%] ${msg.role === 'user' ? '' : 'w-full'}`}>
+                  {msg.role === 'user' ? (
+                    <div className="bg-fire-500/20 text-fire-100 px-4 py-3 rounded-2xl rounded-tr-md text-sm leading-relaxed">
+                      {msg.content}
+                    </div>
+                  ) : (
+                    <AssistantBubble message={msg} />
+                  )}
+                </div>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* 输入区 */}
+        <div className="glass-card p-3 flex items-end gap-2 mt-2">
+          <textarea
+            ref={inputRef}
+            rows={1}
+            value={input}
+            onChange={handleInput}
+            onKeyDown={handleKeyDown}
+            placeholder="输入你的问题... (Shift+Enter 换行)"
+            className="flex-1 bg-transparent outline-none text-sm text-gray-200 placeholder:text-gray-500 resize-none py-2 px-2 max-h-[120px]"
+          />
+          <button
+            onClick={handleSend}
+            disabled={!input.trim() || isStreaming}
+            className="p-2.5 bg-gradient-to-r from-fire-500 to-fire-600 text-white rounded-xl hover:from-fire-400 hover:to-fire-500 transition-all disabled:opacity-30 disabled:cursor-not-allowed active:scale-95 flex-shrink-0"
+          >
+            <Send size={18} />
+          </button>
+        </div>
       </div>
     </div>
   )
+}
+
+function SessionSidebar({
+  sessions,
+  currentSessionId,
+  isLoading,
+  onNew,
+  onSelect,
+  onDelete,
+}: {
+  sessions: SessionItem[]
+  currentSessionId?: string
+  isLoading: boolean
+  onNew: () => void
+  onSelect: (sessionId: string) => void
+  onDelete: (sessionId: string) => void
+}) {
+  return (
+    <aside className="glass-card hidden w-72 shrink-0 flex-col p-3 md:flex">
+      <div className="mb-3 flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm font-semibold text-gray-200">
+          <MessageSquare size={16} className="text-fire-400" />
+          会话历史
+        </div>
+        <button
+          onClick={onNew}
+          className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-white/5 hover:text-fire-300"
+          title="新建会话"
+        >
+          <Plus size={16} />
+        </button>
+      </div>
+
+      <div className="min-h-0 flex-1 space-y-1 overflow-y-auto">
+        {isLoading && <div className="px-2 py-3 text-xs text-gray-500">加载会话中...</div>}
+        {!isLoading && sessions.length === 0 && (
+          <div className="px-2 py-3 text-xs leading-relaxed text-gray-500">
+            暂无历史会话，发送第一条消息后会自动创建。
+          </div>
+        )}
+        {sessions.map((session) => {
+          const active = session.session_id === currentSessionId
+          return (
+            <div
+              key={session.session_id}
+              className={`group flex w-full items-start gap-2 rounded-lg transition-colors ${
+                active ? 'bg-fire-500/15 text-fire-100' : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
+              }`}
+            >
+              <button
+                onClick={() => onSelect(session.session_id)}
+                className="flex min-w-0 flex-1 items-start gap-2 px-2 py-2 text-left"
+              >
+                <MessageSquare size={14} className="mt-0.5 shrink-0" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs font-medium">{session.title || '新会话'}</span>
+                  <span className="mt-0.5 block text-[10px] text-gray-600">
+                    {formatSessionTime(session.updated_at)}
+                  </span>
+                </span>
+              </button>
+              <button
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onDelete(session.session_id)
+                }}
+                className="mr-1 mt-1.5 rounded p-1 text-gray-600 opacity-0 transition-opacity hover:bg-red-500/10 hover:text-red-300 group-hover:opacity-100"
+                title="删除会话"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          )
+        })}
+      </div>
+    </aside>
+  )
+}
+
+function formatSessionTime(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 /** AI 回答气泡 */

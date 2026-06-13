@@ -16,6 +16,8 @@ class FireAgentState(TypedDict, total=False):
     """
 
     user_query: str
+    session_id: str
+    conversation_context: str
     rewritten_queries: list[str]
     rewrite_result: Any
     intent: str
@@ -26,6 +28,7 @@ class FireAgentState(TypedDict, total=False):
     reranked_results: list[Any]
     evidence_sufficient: bool
     sufficiency_result: Any
+    fallback_decision: Any
     web_results: list[Any]
     final_context: str
     context_result: Any
@@ -37,10 +40,16 @@ class FireAgentState(TypedDict, total=False):
     errors: Annotated[list[str], operator.add]
 
 
-def create_initial_state(user_query: str) -> FireAgentState:
+def create_initial_state(
+    user_query: str,
+    session_id: str = "",
+    conversation_context: str = "",
+) -> FireAgentState:
     """根据用户问题创建初始状态。"""
     return FireAgentState(
         user_query=user_query,
+        session_id=session_id,
+        conversation_context=conversation_context,
         rewritten_queries=[],
         intent="",
         local_dense_results=[],
@@ -61,4 +70,3 @@ def create_initial_state(user_query: str) -> FireAgentState:
 def state_get_query(state: FireAgentState) -> str:
     """从状态中安全读取用户问题。"""
     return str(state.get("user_query", "") or "").strip()
-

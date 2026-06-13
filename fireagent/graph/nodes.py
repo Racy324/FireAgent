@@ -12,12 +12,16 @@ from fireagent.prompts import PromptTemplateLoader
 from fireagent.retrieval import (
     ContextBuilder,
     DenseRetriever,
+    FallbackAction,
+    FallbackDecision,
+    FallbackPolicy,
     LexicalReranker,
     LocalEvidenceSufficiencyChecker,
     QueryRewriter,
     SparseRetriever,
     WeightedRRFFusion,
     create_reranker,
+    decide_fallback,
 )
 from fireagent.retrieval.reranker import BaseReranker
 from fireagent.retrieval.schema import RerankedRetrievalResult
@@ -75,6 +79,7 @@ class FireAgentGraphNodes:
         self.query_rewriter = QueryRewriter(config=self.context.config)
         self.fusion = WeightedRRFFusion(config=self.context.config)
         self.sufficiency_checker = LocalEvidenceSufficiencyChecker(config=self.context.config)
+        self.fallback_policy = FallbackPolicy(config=self.context.config)
         self.context_builder = ContextBuilder(config=self.context.config)
         self.web_parser = WebSearchResultParser(config=self.context.config)
         self.prompt_loader = PromptTemplateLoader(config=self.context.config)
@@ -172,13 +177,21 @@ class FireAgentGraphNodes:
             )
 
     def sufficiency_check_node(self, state: FireAgentState) -> FireAgentState:
-        """判断本地证据是否足够回答问题。"""
+        """判断本地证据是否足够，并运行 fallback policy 决策。"""
         query = get_main_query(state)
+        intent = str(state.get("intent", "") or "")
         reranked = list(state.get("reranked_results", []) or [])
-        result = self.sufficiency_checker.check(query, reranked)
+        sufficiency_result = self.sufficiency_checker.check(query, reranked)
+        fallback_decision = self.fallback_policy.decide(
+            query=query,
+            intent=intent,
+            sufficiency=sufficiency_result,
+            candidates=reranked,
+        )
         return FireAgentState(
-            evidence_sufficient=result.sufficient,
-            sufficiency_result=result,
+            evidence_sufficient=sufficiency_result.sufficient,
+            sufficiency_result=sufficiency_result,
+            fallback_decision=fallback_decision,
         )
 
     def web_search_node(self, state: FireAgentState) -> FireAgentState:
@@ -232,6 +245,25 @@ class FireAgentGraphNodes:
         fallback_answer = generate_answer_from_state(state)
         intent = str(state.get("intent", "") or "")
         final_context = str(state.get("final_context", "") or "").strip()
+
+        # 检查 fallback decision，处理特殊动作
+        fallback_decision = state.get("fallback_decision")
+        if fallback_decision is not None:
+            action = getattr(fallback_decision, "action", None)
+            reason = getattr(fallback_decision, "reason", "")
+            if action == FallbackAction.REFUSE:
+                return FireAgentState(
+                    final_answer="抱歉，我无法回答涉及纵火、规避消防检查等危险行为的问题。如遇火灾紧急情况，请立即拨打 119。",
+                )
+            if action == FallbackAction.ANSWER_INSUFFICIENT:
+                return FireAgentState(
+                    final_answer=f"当前知识库中没有找到足够的本地论文证据来回答该问题。{f'（原因：{reason}）' if reason else ''}",
+                )
+            if action == FallbackAction.ASK_CLARIFY:
+                return FireAgentState(
+                    final_answer="这个问题里的指代还不够明确。请补充具体论文、事故、标准名称，或说明你希望我基于哪一批本地资料回答。",
+                )
+
         if intent in {"chat", "reject"} or not final_context or not self.context.config.llm.enabled:
             return FireAgentState(final_answer=fallback_answer)
 
@@ -240,6 +272,7 @@ class FireAgentGraphNodes:
                 "answer_generation",
                 user_query=state_get_query(state),
                 intent=intent,
+                conversation_context=str(state.get("conversation_context", "") or ""),
                 final_context=final_context,
                 citations="\n".join(str(citation) for citation in state.get("citations", []) or []),
                 safety_notice=str(state.get("safety_notice", "") or ""),

@@ -53,6 +53,11 @@ def parse_args() -> argparse.Namespace:
         help="查询时使用哈希 embedding；适合开发索引。",
     )
     parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="关闭逐题生成预测的进度显示。",
+    )
+    parser.add_argument(
         "--ragas-metrics",
         default="faithfulness,answer_relevancy,context_precision",
         help="RAGAS 指标名，逗号分隔。",
@@ -79,6 +84,7 @@ def main() -> None:
         limit=args.limit,
         fail_under=args.fail_under if args.fail_under is not None else cfg.evaluation.fail_under,
         ragas_metrics=[metric.strip() for metric in args.ragas_metrics.split(",") if metric.strip()],
+        show_progress=not args.no_progress,
     )
 
     if args.json:

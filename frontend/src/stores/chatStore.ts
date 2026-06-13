@@ -1,11 +1,23 @@
 import { create } from 'zustand'
-import type { ChatMessage, SSEStageEvent } from '../api/types'
-import { sendStreamChat } from '../api/chat'
+import type { ChatMessage, MessageItem, SessionItem, SSEStageEvent } from '../api/types'
+import {
+  deleteSession as deleteSessionApi,
+  listSessionMessages,
+  listSessions,
+  sendStreamChat,
+} from '../api/chat'
 
 interface ChatState {
+  sessions: SessionItem[]
+  currentSessionId?: string
   messages: ChatMessage[]
   isStreaming: boolean
+  isLoadingSessions: boolean
   currentStages: SSEStageEvent[]
+  loadSessions: () => Promise<void>
+  selectSession: (sessionId: string) => Promise<void>
+  newSession: () => void
+  deleteSession: (sessionId: string) => Promise<void>
   sendMessage: (query: string) => void
   clearMessages: () => void
 }
@@ -13,19 +25,76 @@ interface ChatState {
 let abortController: AbortController | null = null
 
 export const useChatStore = create<ChatState>((set, get) => ({
+  sessions: [],
+  currentSessionId: localStorage.getItem('fireagent.currentSessionId') || undefined,
   messages: [],
   isStreaming: false,
+  isLoadingSessions: false,
   currentStages: [],
 
+  loadSessions: async () => {
+    set({ isLoadingSessions: true })
+    try {
+      const sessions = await listSessions()
+      set({ sessions, isLoadingSessions: false })
+      const current = get().currentSessionId
+      if (current && sessions.some((item) => item.session_id === current) && get().messages.length === 0) {
+        await get().selectSession(current)
+      }
+    } catch {
+      set({ isLoadingSessions: false })
+    }
+  },
+
+  selectSession: async (sessionId: string) => {
+    if (abortController) abortController.abort()
+    const payload = await listSessionMessages(sessionId)
+    const messages = payload.messages
+      .filter((message) => message.role === 'user' || message.role === 'assistant')
+      .map(messageItemToChatMessage)
+    localStorage.setItem('fireagent.currentSessionId', sessionId)
+    set({
+      currentSessionId: sessionId,
+      messages,
+      isStreaming: false,
+      currentStages: [],
+    })
+  },
+
+  newSession: () => {
+    if (abortController) abortController.abort()
+    localStorage.removeItem('fireagent.currentSessionId')
+    set({
+      currentSessionId: undefined,
+      messages: [],
+      isStreaming: false,
+      currentStages: [],
+    })
+  },
+
+  deleteSession: async (sessionId: string) => {
+    if (abortController) abortController.abort()
+    await deleteSessionApi(sessionId)
+    const currentSessionId = get().currentSessionId
+    if (currentSessionId === sessionId) {
+      localStorage.removeItem('fireagent.currentSessionId')
+      set({ currentSessionId: undefined, messages: [], currentStages: [], isStreaming: false })
+    }
+    await get().loadSessions()
+  },
+
   sendMessage: (query: string) => {
+    const sessionId = get().currentSessionId
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
+      session_id: sessionId,
       role: 'user',
       content: query,
     }
 
     const assistantMsg: ChatMessage = {
       id: `assistant-${Date.now()}`,
+      session_id: sessionId,
       role: 'assistant',
       content: '',
       isStreaming: true,
@@ -41,7 +110,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // 取消之前的请求
     if (abortController) abortController.abort()
 
-    abortController = sendStreamChat(query, {
+    abortController = sendStreamChat(query, sessionId, {
       onStage: (event) => {
         set((s) => ({
           currentStages: [...s.currentStages, event],
@@ -70,6 +139,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           const msgs = [...s.messages]
           const last = msgs[msgs.length - 1]
           if (last && last.role === 'assistant') {
+            last.id = data.message_id || last.id
+            last.session_id = data.session_id || s.currentSessionId
             last.isStreaming = false
             last.citations = data.citations
             last.intent = data.intent
@@ -77,8 +148,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
             last.safety_notice = data.safety_notice
             last.elapsed = data.elapsed
           }
-          return { messages: msgs, isStreaming: false }
+          const nextSessionId = data.session_id || s.currentSessionId
+          if (nextSessionId) {
+            localStorage.setItem('fireagent.currentSessionId', nextSessionId)
+          }
+          return { messages: msgs, currentSessionId: nextSessionId, isStreaming: false }
         })
+        void get().loadSessions()
       },
       onError: (error) => {
         set((s) => {
@@ -96,6 +172,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   clearMessages: () => {
     if (abortController) abortController.abort()
-    set({ messages: [], isStreaming: false, currentStages: [] })
+    localStorage.removeItem('fireagent.currentSessionId')
+    set({ currentSessionId: undefined, messages: [], isStreaming: false, currentStages: [] })
   },
 }))
+
+function messageItemToChatMessage(message: MessageItem): ChatMessage {
+  return {
+    id: message.message_id,
+    session_id: message.session_id,
+    role: message.role === 'assistant' ? 'assistant' : 'user',
+    content: message.content,
+    citations: message.citations || [],
+    intent: message.intent,
+    evidence_sufficient: Boolean(message.metadata?.evidence_sufficient),
+  }
+}

@@ -2,6 +2,7 @@
 
 from fireagent.retrieval.context_builder import ContextBuilder, build_context
 from fireagent.retrieval.dense_retriever import DenseRetriever
+from fireagent.retrieval.fallback_policy import FallbackAction, FallbackDecision, FallbackPolicy, decide_fallback
 from fireagent.retrieval.hybrid_fusion import WeightedRRFFusion, weighted_rrf
 from fireagent.retrieval.query_rewriter import QueryRewriter, rewrite_query
 from fireagent.retrieval.reranker import (
@@ -34,6 +35,9 @@ __all__ = [
     "CrossEncoderReranker",
     "DenseRetriever",
     "EvidenceItem",
+    "FallbackAction",
+    "FallbackDecision",
+    "FallbackPolicy",
     "FallbackReranker",
     "FlagEmbeddingReranker",
     "FusedRetrievalResult",
@@ -49,6 +53,7 @@ __all__ = [
     "build_context",
     "check_local_evidence_sufficiency",
     "create_reranker",
+    "decide_fallback",
     "rewrite_query",
     "weighted_rrf",
 ]

@@ -46,6 +46,22 @@ class ManualRAGEvaluator:
         if prediction.errors:
             notes.append(f"运行错误：{'；'.join(prediction.errors[:3])}")
 
+        expected_action = _expected_action(case)
+        actual_action = prediction.fallback_action or prediction.metadata.get("actual_action", "")
+        if not actual_action:
+            actual_action = "answer_local" if prediction.evidence_sufficient else "answer_insufficient"
+        web_triggered = actual_action == "use_web" or bool(prediction.metadata.get("web_triggered", False))
+        fallback_correct = actual_action == expected_action
+        false_web = web_triggered and expected_action != "use_web"
+        missed_web = expected_action == "use_web" and not web_triggered
+        sufficiency_correct = _sufficiency_correct(expected_action, prediction.evidence_sufficient)
+        if not fallback_correct:
+            notes.append(f"Fallback 动作不匹配：期望 {expected_action}，实际 {actual_action}。")
+        if false_web:
+            notes.append("本地可答或不应联网的问题触发了 web fallback。")
+        if missed_web:
+            notes.append("应联网核验的问题没有触发 web fallback。")
+
         overall_score = self._overall_score(
             answer_keyword_recall=answer_keyword_recall,
             context_keyword_recall=context_keyword_recall,
@@ -68,6 +84,13 @@ class ManualRAGEvaluator:
             missing_keywords=missing_keywords,
             missing_citations=missing_citations,
             notes=notes,
+            expected_action=expected_action,
+            actual_action=actual_action,
+            fallback_correct=fallback_correct,
+            sufficiency_correct=sufficiency_correct,
+            web_triggered=web_triggered,
+            false_web=false_web,
+            missed_web=missed_web,
         )
 
     def score_all(
@@ -105,10 +128,20 @@ class ManualRAGEvaluator:
             "safety_score",
             "overall_score",
         ]
-        return {
+        averages = {
             field: round(mean(float(getattr(score, field)) for score in scores), 4)
             for field in fields
         }
+        for field in ("fallback_correct", "sufficiency_correct"):
+            available = [score for score in scores if getattr(score, field) is not None]
+            if available:
+                averages[field] = round(
+                    mean(1.0 if getattr(score, field) else 0.0 for score in available),
+                    4,
+                )
+        for field in ("web_triggered", "false_web", "missed_web"):
+            averages[field] = round(mean(1.0 if getattr(score, field) else 0.0 for score in scores), 4)
+        return averages
 
     @staticmethod
     def _keyword_recall(keywords: list[str], text: str) -> tuple[float, list[str]]:
@@ -218,3 +251,31 @@ def _terms(text: str) -> set[str]:
         else:
             terms.add(token)
     return terms
+
+
+def _expected_action(case: EvaluationCase) -> str:
+    """根据评估样本 metadata 推断期望 fallback 动作。"""
+    metadata = case.metadata or {}
+    explicit = metadata.get("expected_action")
+    if explicit:
+        return str(explicit)
+    if metadata.get("requires_current_web") or metadata.get("expected_web"):
+        return "use_web"
+    if metadata.get("harmful") or metadata.get("expected_refuse"):
+        return "refuse"
+
+    question_type = str(metadata.get("question_type", "") or "").lower()
+    if question_type in {"web_fallback"}:
+        return "use_web"
+    if question_type in {"no_answer"}:
+        return "answer_insufficient"
+    return "answer_local"
+
+
+def _sufficiency_correct(expected_action: str, evidence_sufficient: bool) -> bool:
+    """粗略判断本地证据充分性是否符合期望动作。"""
+    if expected_action == "answer_local":
+        return evidence_sufficient
+    if expected_action in {"use_web", "answer_insufficient", "refuse", "ask_clarify"}:
+        return not evidence_sufficient
+    return True

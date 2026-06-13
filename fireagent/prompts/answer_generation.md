@@ -29,6 +29,9 @@
 # 问题意图
 {intent}
 
+# 最近对话上下文
+{conversation_context}
+
 # 最终 context
 {final_context}
 
@@ -37,4 +40,3 @@
 
 # 安全提醒
 {safety_notice}
-

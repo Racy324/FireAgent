@@ -92,6 +92,7 @@ class RetrievalConfig(ConfigSection):
     sufficiency_min_score: float = Field(default=0.18, ge=0.0)
     sufficiency_min_evidence: int = Field(default=2, gt=0)
     sufficiency_min_term_coverage: float = Field(default=0.30, ge=0.0, le=1.0)
+    cross_doc_min_docs: int = Field(default=2, gt=0)
 
     @model_validator(mode="after")
     def validate_retrieval_limits(self) -> "RetrievalConfig":
@@ -184,12 +185,81 @@ class EvaluationConfig(ConfigSection):
     fail_under: Optional[float] = None
 
 
+class MemoryConfig(ConfigSection):
+    """会话历史和记忆系统配置。"""
+
+    enabled: bool = True
+    database_path: str = "data/app/fireagent.db"
+    recent_message_limit: int = Field(default=8, gt=0)
+
+
 class WebFallbackConfig(ConfigSection):
     """Web fallback trigger settings."""
 
     temporal_keywords: list[str] = Field(
-        default_factory=lambda: ["最新", "政策", "标准", "规范", "法规", "事故", "2026", "今年", "最近"]
+        default_factory=lambda: [
+            "最新",
+            "政策",
+            "标准",
+            "规范",
+            "法规",
+            "事故",
+            "2026",
+            "今年",
+            "最近",
+            "现行",
+            "当前",
+            "近期",
+            "刚发布",
+            "现在",
+        ]
     )
+    official_keywords: list[str] = Field(
+        default_factory=lambda: [
+            "标准",
+            "规范",
+            "法规",
+            "政策",
+            "官方",
+            "通报",
+            "统计",
+            "应急管理部",
+            "消防救援局",
+            "GB",
+            "现行版本",
+        ]
+    )
+    local_scope_keywords: list[str] = Field(
+        default_factory=lambda: [
+            "根据本地知识库",
+            "仅基于知识库",
+            "只看上传文档",
+            "根据这些论文",
+            "这批论文",
+            "根据论文",
+            "仅根据本地",
+        ]
+    )
+    harmful_keywords: list[str] = Field(
+        default_factory=lambda: [
+            "纵火",
+            "制造火灾",
+            "规避消防",
+            "绕过报警",
+            "破坏灭火",
+            "提高火灾破坏",
+            "如何放火",
+            "怎么纵火",
+        ]
+    )
+    ambiguous_keywords: list[str] = Field(
+        default_factory=lambda: ["那个", "这个", "这篇", "它", "上述", "前面提到"]
+    )
+    force_web_temporal: bool = True
+    force_web_official: bool = True
+    disable_for_local_scope: bool = True
+    disable_for_harmful: bool = True
+    ask_clarify_for_ambiguous: bool = True
 
 
 class PromptConfig(ConfigSection):
@@ -215,6 +285,7 @@ class FireAgentConfig(ConfigSection):
     qdrant: QdrantConfig = Field(default_factory=QdrantConfig)
     tavily: TavilyConfig = Field(default_factory=TavilyConfig)
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
     web: WebFallbackConfig = Field(default_factory=WebFallbackConfig)
     prompts: PromptConfig = Field(default_factory=PromptConfig)
 
@@ -290,6 +361,9 @@ ENV_TO_CONFIG_PATH: dict[str, tuple[str, ...]] = {
     "EVAL_OUTPUT_DIR": ("evaluation", "output_dir"),
     "EVAL_DEFAULT_MODE": ("evaluation", "default_mode"),
     "EVAL_FAIL_UNDER": ("evaluation", "fail_under"),
+    "MEMORY_ENABLED": ("memory", "enabled"),
+    "MEMORY_DATABASE_PATH": ("memory", "database_path"),
+    "MEMORY_RECENT_MESSAGE_LIMIT": ("memory", "recent_message_limit"),
     "APP_ENVIRONMENT": ("app", "environment"),
     "LOG_LEVEL": ("app", "log_level"),
 }

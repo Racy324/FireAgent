@@ -41,6 +41,9 @@ class EvaluationPrediction(EvaluationModel):
     errors: list[str] = Field(default_factory=list)
     latency_seconds: Optional[float] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Fallback 决策字段
+    fallback_action: str = ""
+    fallback_reason: str = ""
 
 
 class ManualScore(EvaluationModel):
@@ -58,6 +61,14 @@ class ManualScore(EvaluationModel):
     missing_keywords: list[str] = Field(default_factory=list)
     missing_citations: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+    # Fallback 决策字段
+    expected_action: str = ""
+    actual_action: str = ""
+    fallback_correct: Optional[bool] = None
+    sufficiency_correct: Optional[bool] = None
+    web_triggered: bool = False
+    false_web: bool = False
+    missed_web: bool = False
 
 
 class EvaluationSummary(EvaluationModel):

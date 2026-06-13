@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import sys
 import time
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
@@ -21,6 +23,11 @@ from fireagent.evaluation.schema import EvaluationCase, EvaluationPrediction, Ev
 from fireagent.graph.workflow import build_fireagent_workflow, run_fireagent_workflow
 from fireagent.utils.config import FireAgentConfig, get_config
 from fireagent.vectorstore import FireAgentQdrantClient
+
+try:  # tqdm 是可选依赖；缺失时退化为简洁文本进度。
+    from tqdm.auto import tqdm as _tqdm
+except Exception:  # pragma: no cover - 覆盖所有可选依赖导入异常。
+    _tqdm = None
 
 
 AnswerFn = Callable[[EvaluationCase], EvaluationPrediction]
@@ -49,6 +56,7 @@ class RAGEvaluationRunner:
         limit: int | None = None,
         fail_under: float | None = None,
         ragas_metrics: list[str] | None = None,
+        show_progress: bool = True,
     ) -> EvaluationSummary:
         """运行一次完整评测。"""
         cases = load_evaluation_cases(dataset_path, limit=limit)
@@ -57,7 +65,7 @@ class RAGEvaluationRunner:
         if predictions_path:
             predictions = load_predictions(predictions_path, limit=limit)
         else:
-            predictions = self.generate_predictions(cases)
+            predictions = self.generate_predictions(cases, show_progress=show_progress)
 
         prediction_output = run_dir / "predictions.jsonl"
         write_predictions(prediction_output, predictions)
@@ -100,14 +108,18 @@ class RAGEvaluationRunner:
         write_json(run_dir / "summary.json", summary.model_dump())
         return summary
 
-    def generate_predictions(self, cases: list[EvaluationCase]) -> list[EvaluationPrediction]:
+    def generate_predictions(
+        self,
+        cases: list[EvaluationCase],
+        show_progress: bool = True,
+    ) -> list[EvaluationPrediction]:
         """对评测集逐条调用 FireAgent，生成预测结果。"""
         predictions: list[EvaluationPrediction] = []
         # 复用同一个 workflow 实例，避免每条用例重复加载模型（reranker/embedding）
         workflow = None
         if self.answer_fn is None:
             workflow = build_fireagent_workflow(config=self.config, vectorstore=self.vectorstore)
-        for case in cases:
+        for case in _iter_cases_with_progress(cases, enabled=show_progress):
             if self.answer_fn is not None:
                 predictions.append(self.answer_fn(case))
                 continue
@@ -118,6 +130,22 @@ class RAGEvaluationRunner:
                 state = dict(result)
                 latency = time.perf_counter() - start
                 context = str(state.get("final_context", "") or "")
+                sufficiency_result = state.get("sufficiency_result")
+                fallback_decision = state.get("fallback_decision")
+                fallback_action = ""
+                fallback_reason = ""
+                fallback_payload: dict[str, object] = {}
+                if fallback_decision is not None:
+                    action = getattr(fallback_decision, "action", "")
+                    fallback_action = action.value if hasattr(action, "value") else str(action)
+                    fallback_reason = str(getattr(fallback_decision, "reason", "") or "")
+                    if hasattr(fallback_decision, "model_dump"):
+                        fallback_payload = fallback_decision.model_dump(mode="json")
+                sufficiency_payload = (
+                    sufficiency_result.model_dump(mode="json")
+                    if hasattr(sufficiency_result, "model_dump")
+                    else {}
+                )
                 predictions.append(
                     EvaluationPrediction(
                         case_id=case.case_id,
@@ -132,8 +160,13 @@ class RAGEvaluationRunner:
                         metadata={
                             "hallucination_warnings": list(
                                 state.get("hallucination_warnings", []) or []
-                            )
+                            ),
+                            "sufficiency": sufficiency_payload,
+                            "fallback": fallback_payload,
+                            "web_triggered": fallback_action == "use_web",
                         },
+                        fallback_action=fallback_action,
+                        fallback_reason=fallback_reason,
                     )
                 )
             except Exception as exc:  # noqa: BLE001 - 单条评测失败也要保留记录。
@@ -159,3 +192,28 @@ class RAGEvaluationRunner:
             suffix += 1
         run_dir.mkdir(parents=True, exist_ok=True)
         return run_dir
+
+
+def _iter_cases_with_progress(
+    cases: list[EvaluationCase],
+    enabled: bool = True,
+) -> Iterator[EvaluationCase]:
+    """按用例迭代，并在终端展示预测生成进度。"""
+    total = len(cases)
+    if not enabled or total == 0:
+        yield from cases
+        return
+
+    if _tqdm is not None:
+        yield from _tqdm(
+            cases,
+            total=total,
+            desc="生成预测",
+            unit="题",
+            dynamic_ncols=True,
+        )
+        return
+
+    for index, case in enumerate(cases, start=1):
+        print(f"生成预测 {index}/{total}: {case.case_id}", file=sys.stderr, flush=True)
+        yield case

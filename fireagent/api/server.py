@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import json
 from collections import Counter
 from pathlib import Path
 from typing import Optional
@@ -18,11 +19,18 @@ from fireagent.api.schemas import (
     PaperDetail,
     PaperItem,
     PapersStats,
+    MessageItem,
+    SessionCreateRequest,
+    SessionItem,
+    SessionMessagesResponse,
+    SessionsListResponse,
+    SessionUpdateRequest,
 )
 from fireagent.api.streaming import run_streaming_workflow
 from fireagent.graph.workflow import run_fireagent_workflow
 from fireagent.ingestion import PDFIndexBuilder
 from fireagent.ingestion.pdfplumber_parser import PdfPlumberPDFParser
+from fireagent.memory import MemoryService
 from fireagent.utils.config import FireAgentConfig, PROJECT_ROOT, get_config
 from fireagent.vectorstore import FireAgentQdrantClient
 
@@ -61,6 +69,7 @@ def create_app(config: Optional[FireAgentConfig] = None) -> object:
 
     app.state.config = cfg
     app.state.vectorstore = None
+    app.state.memory_service = None
 
     def get_vectorstore(hash_embedding: bool = False) -> FireAgentQdrantClient:
         """懒加载 Qdrant 向量库客户端。"""
@@ -88,11 +97,87 @@ def create_app(config: Optional[FireAgentConfig] = None) -> object:
 
     # ── 问答（同步） ──
 
+    def get_memory_service() -> MemoryService | None:
+        """读取会话历史服务。"""
+        if not cfg.memory.enabled:
+            return None
+        if app.state.memory_service is None:
+            app.state.memory_service = MemoryService(config=cfg)
+        return app.state.memory_service
+
+    @app.post("/sessions", response_model=SessionItem)
+    def create_session(request: SessionCreateRequest) -> SessionItem:
+        """创建新会话。"""
+        memory = get_memory_service()
+        if memory is None:
+            raise HTTPException(status_code=503, detail="会话历史功能未启用。")
+        session = memory.store.create_session(title=request.title)
+        return _session_item(session)
+
+    @app.get("/sessions", response_model=SessionsListResponse)
+    def list_sessions() -> SessionsListResponse:
+        """列出历史会话。"""
+        memory = get_memory_service()
+        if memory is None:
+            return SessionsListResponse(sessions=[])
+        return SessionsListResponse(sessions=[_session_item(item) for item in memory.store.list_sessions()])
+
+    @app.patch("/sessions/{session_id}", response_model=SessionItem)
+    def update_session(session_id: str, request: SessionUpdateRequest) -> SessionItem:
+        """更新会话标题。"""
+        memory = get_memory_service()
+        if memory is None:
+            raise HTTPException(status_code=503, detail="会话历史功能未启用。")
+        session = memory.store.update_session_title(session_id, request.title)
+        if session is None:
+            raise HTTPException(status_code=404, detail="会话不存在。")
+        return _session_item(session)
+
+    @app.delete("/sessions/{session_id}", status_code=204)
+    def delete_session(session_id: str) -> None:
+        """删除会话。"""
+        memory = get_memory_service()
+        if memory is not None:
+            memory.store.delete_session(session_id)
+        return None
+
+    @app.get("/sessions/{session_id}/messages", response_model=SessionMessagesResponse)
+    def list_session_messages(session_id: str) -> SessionMessagesResponse:
+        """读取会话消息。"""
+        memory = get_memory_service()
+        if memory is None:
+            return SessionMessagesResponse(session_id=session_id, messages=[])
+        session = memory.store.get_session(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="会话不存在。")
+        messages = memory.store.list_messages(session_id)
+        return SessionMessagesResponse(
+            session_id=session_id,
+            messages=[_message_item(item) for item in messages],
+        )
+
     @app.post("/chat", response_model=ChatResponse)
     def chat(request: ChatRequest) -> ChatResponse:
         """在线问答接口。"""
+        memory = get_memory_service()
+        session_id = request.session_id or ""
+        conversation_context = ""
+        user_message_id = ""
+        if memory is not None:
+            session = memory.get_or_create_session(request.session_id, query=request.query)
+            session_id = session.session_id
+            conversation_context = memory.recent_context(session_id)
+            user_message = memory.record_user_message(session_id, request.query)
+            user_message_id = user_message.message_id
+
         try:
-            state = run_fireagent_workflow(request.query, config=cfg, vectorstore=None)
+            state = run_fireagent_workflow(
+                request.query,
+                config=cfg,
+                vectorstore=None,
+                session_id=session_id,
+                conversation_context=conversation_context,
+            )
         except Exception as exc:  # noqa: BLE001 - API 层统一转 HTTP 错误。
             logger.exception("FireAgent /chat failed")
             raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -107,10 +192,30 @@ def create_app(config: Optional[FireAgentConfig] = None) -> object:
                 "reranked_count": len(state.get("reranked_results", []) or []),
                 "web_count": len(state.get("web_results", []) or []),
                 "hallucination_warnings": state.get("hallucination_warnings", []),
+                "conversation_context": conversation_context,
             }
 
+        answer = str(state.get("final_answer", "") or "")
+        assistant_message_id = ""
+        if memory is not None:
+            assistant = memory.record_assistant_message(
+                session_id=session_id,
+                answer=answer,
+                intent=str(state.get("intent", "") or ""),
+                citations=list(state.get("citations", []) or []),
+                debug=debug,
+                metadata={
+                    "user_message_id": user_message_id,
+                    "evidence_sufficient": bool(state.get("evidence_sufficient", False)),
+                    "errors": list(state.get("errors", []) or []),
+                },
+            )
+            assistant_message_id = assistant.message_id
+
         return ChatResponse(
-            answer=str(state.get("final_answer", "") or ""),
+            answer=answer,
+            session_id=session_id,
+            message_id=assistant_message_id,
             intent=str(state.get("intent", "") or ""),
             evidence_sufficient=bool(state.get("evidence_sufficient", False)),
             citations=list(state.get("citations", []) or []),
@@ -125,11 +230,47 @@ def create_app(config: Optional[FireAgentConfig] = None) -> object:
     def chat_stream(request: ChatRequest):
         """SSE 流式问答接口。"""
         def event_generator():
-            yield from run_streaming_workflow(
+            memory = get_memory_service()
+            session_id = request.session_id or ""
+            conversation_context = ""
+            if memory is not None:
+                session = memory.get_or_create_session(request.session_id, query=request.query)
+                session_id = session.session_id
+                conversation_context = memory.recent_context(session_id)
+                memory.record_user_message(session_id, request.query)
+
+            answer_parts: list[str] = []
+            last_done: dict = {}
+            for event_text in run_streaming_workflow(
                 request.query,
                 config=cfg,
                 vectorstore=None,
-            )
+                session_id=session_id,
+                conversation_context=conversation_context,
+            ):
+                event_name, payload = _parse_sse_event(event_text)
+                if event_name == "token":
+                    answer_parts.append(str(payload.get("token", "")))
+                if event_name == "done":
+                    last_done = payload
+                    assistant_message_id = ""
+                    if memory is not None:
+                        assistant = memory.record_assistant_message(
+                            session_id=session_id,
+                            answer="".join(answer_parts),
+                            intent=str(payload.get("intent", "") or ""),
+                            citations=list(payload.get("citations", []) or []),
+                            metadata={
+                                "evidence_sufficient": bool(payload.get("evidence_sufficient", False)),
+                                "fallback": payload.get("fallback", {}),
+                            },
+                        )
+                        assistant_message_id = assistant.message_id
+                    last_done["session_id"] = session_id
+                    last_done["message_id"] = assistant_message_id
+                    yield _format_sse_event("done", last_done)
+                else:
+                    yield event_text
 
         return StreamingResponse(
             event_generator(),
@@ -321,6 +462,51 @@ def create_app(config: Optional[FireAgentConfig] = None) -> object:
 
 
 # ── 辅助函数 ──
+
+
+def _session_item(session) -> SessionItem:
+    """把存储层 session 转成 API 响应。"""
+    return SessionItem(
+        session_id=session.session_id,
+        title=session.title,
+        created_at=session.created_at,
+        updated_at=session.updated_at,
+    )
+
+
+def _message_item(message) -> MessageItem:
+    """把存储层 message 转成 API 响应。"""
+    return MessageItem(
+        message_id=message.message_id,
+        session_id=message.session_id,
+        role=message.role,
+        content=message.content,
+        created_at=message.created_at,
+        intent=message.intent,
+        citations=message.citations,
+        metadata=message.metadata,
+    )
+
+
+def _parse_sse_event(event_text: str) -> tuple[str, dict]:
+    """解析当前内部 SSE 文本。"""
+    event_name = ""
+    payload: dict = {}
+    for line in event_text.splitlines():
+        if line.startswith("event: "):
+            event_name = line.removeprefix("event: ").strip()
+        elif line.startswith("data: "):
+            raw = line.removeprefix("data: ")
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                payload = {}
+    return event_name, payload
+
+
+def _format_sse_event(event: str, data: dict) -> str:
+    """格式化 SSE 事件。"""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 def _query_papers_from_qdrant(vs: FireAgentQdrantClient) -> dict:

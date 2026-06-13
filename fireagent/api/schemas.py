@@ -26,12 +26,61 @@ class ChatResponse(APIModel):
     """问答响应。"""
 
     answer: str
+    session_id: str = ""
+    message_id: str = ""
     intent: str = ""
     evidence_sufficient: bool = False
     citations: list[str] = Field(default_factory=list)
     context: Optional[str] = None
     errors: list[str] = Field(default_factory=list)
     debug: dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionCreateRequest(APIModel):
+    """创建会话请求。"""
+
+    title: str = ""
+
+
+class SessionUpdateRequest(APIModel):
+    """更新会话请求。"""
+
+    title: str
+
+
+class SessionItem(APIModel):
+    """会话列表项。"""
+
+    session_id: str
+    title: str = ""
+    created_at: str
+    updated_at: str
+
+
+class SessionsListResponse(APIModel):
+    """会话列表响应。"""
+
+    sessions: list[SessionItem] = Field(default_factory=list)
+
+
+class MessageItem(APIModel):
+    """会话消息项。"""
+
+    message_id: str
+    session_id: str
+    role: str
+    content: str
+    created_at: str
+    intent: str = ""
+    citations: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionMessagesResponse(APIModel):
+    """会话消息响应。"""
+
+    session_id: str
+    messages: list[MessageItem] = Field(default_factory=list)
 
 
 class IngestRequest(APIModel):
