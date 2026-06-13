@@ -18,7 +18,7 @@ jobs:
       - name: Fail if private or generated files are tracked
         shell: bash
         run: |
-          forbidden_regex='^(\.env($|\.)|data/raw_pdfs/|data/parsed/|data/chunks/|data/eval/runs/|models/|frontend/dist/|frontend/node_modules/|__pycache__/|\.pytest_cache/|notes/|personal-kb/|AGENTS\.md$|Claude\.md$|download\.py$|README copy\.md$)'
+          forbidden_regex='^(\.env$|\.env\.(local|development|production|test)$|data/raw_pdfs/|data/parsed/|data/chunks/|data/eval/runs/|models/|frontend/dist/|frontend/node_modules/|__pycache__/|\.pytest_cache/|notes/|personal-kb/|AGENTS\.md$|Claude\.md$|download\.py$|README copy\.md$)'
           if git ls-files | grep -E "$forbidden_regex"; then
             echo "Forbidden private, generated, or large files are tracked."
             exit 1
