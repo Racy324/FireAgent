@@ -44,6 +44,7 @@ data/raw_pdfs/
 data/parsed/
 data/chunks/
 data/eval/runs/
+data/traces/
 *.db
 *.sqlite
 *.sqlite3

@@ -138,3 +138,11 @@ memory:
     episodic_half_life_days: 90
     procedural_half_life_days: 365
     dedup_similarity_threshold: 0.88
+
+observability:
+  enabled: true
+  trace_dir: data/traces
+  save_trace: true
+  save_index: true
+  include_debug_in_response: true
+  max_summary_chars: 500

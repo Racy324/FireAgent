@@ -322,6 +322,17 @@ class PromptConfig(ConfigSection):
     hallucination_check: str = "fireagent/prompts/hallucination_check.md"
 
 
+class ObservabilityConfig(ConfigSection):
+    """Observability / Trace 配置。"""
+
+    enabled: bool = True
+    trace_dir: str = "data/traces"
+    save_trace: bool = True
+    save_index: bool = True
+    include_debug_in_response: bool = True
+    max_summary_chars: int = Field(default=500, gt=0)
+
+
 class FireAgentConfig(ConfigSection):
     """Top-level FireAgent configuration."""
 
@@ -339,6 +350,7 @@ class FireAgentConfig(ConfigSection):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     web: WebFallbackConfig = Field(default_factory=WebFallbackConfig)
     prompts: PromptConfig = Field(default_factory=PromptConfig)
+    observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
 
 
 ENV_TO_CONFIG_PATH: dict[str, tuple[str, ...]] = {
@@ -429,6 +441,8 @@ ENV_TO_CONFIG_PATH: dict[str, tuple[str, ...]] = {
     "MEMORY_RECENT_MESSAGE_LIMIT": ("memory", "recent_message_limit"),
     "APP_ENVIRONMENT": ("app", "environment"),
     "LOG_LEVEL": ("app", "log_level"),
+    "OBSERVABILITY_ENABLED": ("observability", "enabled"),
+    "OBSERVABILITY_TRACE_DIR": ("observability", "trace_dir"),
 }
 
 

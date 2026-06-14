@@ -50,6 +50,7 @@ class ChatResponse(APIModel):
     answer: str
     session_id: str = ""
     message_id: str = ""
+    trace_id: str = ""
     intent: str = ""
     evidence_sufficient: bool = False
     citations: list[str] = Field(default_factory=list)

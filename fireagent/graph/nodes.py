@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Optional
 
@@ -160,17 +161,36 @@ class FireAgentGraphNodes:
 
     def intent_router_node(self, state: FireAgentState) -> FireAgentState:
         """识别用户问题意图，并写入 intent。"""
-        query = state_get_query(state)
-        route_result = self.intent_router.route(
-            query=query,
-            conversation_context=str(state.get("conversation_context", "") or ""),
-            long_term_memories=str(state.get("long_term_memories", "") or ""),
+        from fireagent.observability import get_current_trace_recorder
+
+        recorder = get_current_trace_recorder()
+        step_ctx = (
+            recorder.step("intent_router", current_goal="识别用户请求意图", tool_name="LLMIntentRouter.route")
+            if recorder else nullcontext()
         )
-        intent = route_result.intent
-        reason = route_result.reason
-        safety_notice = ""
-        if intent == "emergency" or route_result.need_safety_notice:
-            safety_notice = "安全提醒：如现场存在明火、浓烟、爆炸或人员受困，请立即拨打 119，并优先撤离到安全区域。"
+
+        query = state_get_query(state)
+        with step_ctx as step:
+            route_result = self.intent_router.route(
+                query=query,
+                conversation_context=str(state.get("conversation_context", "") or ""),
+                long_term_memories=str(state.get("long_term_memories", "") or ""),
+            )
+            intent = route_result.intent
+            reason = route_result.reason
+            safety_notice = ""
+            if intent == "emergency" or route_result.need_safety_notice:
+                safety_notice = "安全提醒：如现场存在明火、浓烟、爆炸或人员受困，请立即拨打 119，并优先撤离到安全区域。"
+            if step:
+                step.tool_result_summary = {
+                    "intent": route_result.intent,
+                    "sub_intent": route_result.sub_intent,
+                    "confidence": route_result.confidence,
+                    "source": route_result.source,
+                    "need_rag": route_result.need_rag,
+                    "need_memory": route_result.need_memory,
+                }
+                step.state_delta_summary = {"intent": intent, "sub_intent": route_result.sub_intent}
         return FireAgentState(
             intent=intent,
             intent_reason=reason,
@@ -180,8 +200,19 @@ class FireAgentGraphNodes:
 
     def query_rewrite_node(self, state: FireAgentState) -> FireAgentState:
         """对用户问题进行查询改写。"""
+        from fireagent.observability import get_current_trace_recorder
+
+        recorder = get_current_trace_recorder()
+        step_ctx = (
+            recorder.step("query_rewrite", current_goal="对用户问题进行查询改写")
+            if recorder else nullcontext()
+        )
+
         query = state_get_query(state)
-        rewrite_result = self.query_rewriter.rewrite(query)
+        with step_ctx as step:
+            rewrite_result = self.query_rewriter.rewrite(query)
+            if step:
+                step.tool_result_summary = {"query_count": len(rewrite_result.all_queries), "main_query": rewrite_result.main_query}
         return FireAgentState(
             rewrite_result=rewrite_result,
             rewritten_queries=rewrite_result.all_queries,
@@ -189,69 +220,139 @@ class FireAgentGraphNodes:
 
     def dense_retrieve_node(self, state: FireAgentState) -> FireAgentState:
         """执行 dense 检索。"""
+        from fireagent.observability import get_current_trace_recorder
+
+        recorder = get_current_trace_recorder()
+        step_ctx = (
+            recorder.step("dense_retrieve", current_goal="执行 dense 向量检索")
+            if recorder else nullcontext()
+        )
+
         try:
-            rewrite_result = state.get("rewrite_result")
-            if rewrite_result is None:
-                rewrite_result = self.query_rewriter.rewrite(state_get_query(state))
-            results = DenseRetriever(self.vectorstore, config=self.context.config).retrieve_many(rewrite_result)
+            with step_ctx as step:
+                rewrite_result = state.get("rewrite_result")
+                if rewrite_result is None:
+                    rewrite_result = self.query_rewriter.rewrite(state_get_query(state))
+                results = DenseRetriever(self.vectorstore, config=self.context.config).retrieve_many(rewrite_result)
+                if step:
+                    top_score = getattr(results[0], "final_score", None) if results else None
+                    step.tool_result_summary = {"count": len(results), "top_score": top_score}
             return FireAgentState(local_dense_results=results)
         except Exception as exc:  # noqa: BLE001 - 外部服务与模型错误统一写入状态。
             return FireAgentState(local_dense_results=[], errors=[f"dense_retrieve_node 失败：{exc}"])
 
     def sparse_retrieve_node(self, state: FireAgentState) -> FireAgentState:
         """执行 sparse/BM25 检索。"""
+        from fireagent.observability import get_current_trace_recorder
+
+        recorder = get_current_trace_recorder()
+        step_ctx = (
+            recorder.step("sparse_retrieve", current_goal="执行 sparse/BM25 检索")
+            if recorder else nullcontext()
+        )
+
         try:
-            rewrite_result = state.get("rewrite_result")
-            if rewrite_result is None:
-                rewrite_result = self.query_rewriter.rewrite(state_get_query(state))
-            results = SparseRetriever(self.vectorstore, config=self.context.config).retrieve_many(rewrite_result)
+            with step_ctx as step:
+                rewrite_result = state.get("rewrite_result")
+                if rewrite_result is None:
+                    rewrite_result = self.query_rewriter.rewrite(state_get_query(state))
+                results = SparseRetriever(self.vectorstore, config=self.context.config).retrieve_many(rewrite_result)
+                if step:
+                    step.tool_result_summary = {"count": len(results)}
             return FireAgentState(local_sparse_results=results)
         except Exception as exc:  # noqa: BLE001
             return FireAgentState(local_sparse_results=[], errors=[f"sparse_retrieve_node 失败：{exc}"])
 
     def fusion_node(self, state: FireAgentState) -> FireAgentState:
         """对 dense 与 sparse 结果做 Weighted RRF 融合。"""
-        dense_results = list(state.get("local_dense_results", []) or [])
-        sparse_results = list(state.get("local_sparse_results", []) or [])
-        fused = self.fusion.fuse(dense_results, sparse_results)
+        from fireagent.observability import get_current_trace_recorder
+
+        recorder = get_current_trace_recorder()
+        step_ctx = (
+            recorder.step("fusion", current_goal="对 dense 与 sparse 结果做 RRF 融合")
+            if recorder else nullcontext()
+        )
+
+        with step_ctx as step:
+            dense_results = list(state.get("local_dense_results", []) or [])
+            sparse_results = list(state.get("local_sparse_results", []) or [])
+            fused = self.fusion.fuse(dense_results, sparse_results)
+            if step:
+                step.tool_result_summary = {
+                    "fused_count": len(fused),
+                    "dense_weight": self.context.config.retrieval.dense_weight,
+                    "sparse_weight": self.context.config.retrieval.sparse_weight,
+                }
         return FireAgentState(fused_results=fused)
 
     def rerank_node(self, state: FireAgentState) -> FireAgentState:
         """对融合候选执行 cross-encoder 重排。"""
+        from fireagent.observability import get_current_trace_recorder
+
+        recorder = get_current_trace_recorder()
+        step_ctx = (
+            recorder.step("rerank", current_goal="对融合候选执行 cross-encoder 重排")
+            if recorder else nullcontext()
+        )
+
         query = get_main_query(state)
         fused = list(state.get("fused_results", []) or [])
         if not fused:
             return FireAgentState(reranked_results=[])
-        try:
-            reranked = self.reranker.rerank(
-                query,
-                fused,
-                top_k=self.context.config.retrieval.rerank_top_k,
-            )
-            return FireAgentState(reranked_results=reranked)
-        except Exception as exc:  # noqa: BLE001
-            fallback = LexicalReranker().rerank(
-                query,
-                fused,
-                top_k=self.context.config.retrieval.rerank_top_k,
-            )
+        with step_ctx as step:
+            rerank_fallback = False
+            try:
+                reranked = self.reranker.rerank(
+                    query,
+                    fused,
+                    top_k=self.context.config.retrieval.rerank_top_k,
+                )
+            except Exception as exc:  # noqa: BLE001
+                rerank_fallback = True
+                reranked = LexicalReranker().rerank(
+                    query,
+                    fused,
+                    top_k=self.context.config.retrieval.rerank_top_k,
+                )
+                if step:
+                    step.error = str(exc)[:500]
+            if step:
+                top_score = getattr(reranked[0], "final_score", None) if reranked else None
+                step.tool_result_summary = {"reranked_count": len(reranked), "top_score": top_score, "fallback_to_lexical": rerank_fallback}
+        if rerank_fallback:
             return FireAgentState(
-                reranked_results=fallback,
-                errors=[f"rerank_node 使用 fallback：{exc}"],
+                reranked_results=reranked,
+                errors=[f"rerank_node 使用 fallback"],
             )
+        return FireAgentState(reranked_results=reranked)
 
     def sufficiency_check_node(self, state: FireAgentState) -> FireAgentState:
         """判断本地证据是否足够，并运行 fallback policy 决策。"""
-        query = get_main_query(state)
-        intent = str(state.get("intent", "") or "")
-        reranked = list(state.get("reranked_results", []) or [])
-        sufficiency_result = self.sufficiency_checker.check(query, reranked)
-        fallback_decision = self.fallback_policy.decide(
-            query=query,
-            intent=intent,
-            sufficiency=sufficiency_result,
-            candidates=reranked,
+        from fireagent.observability import get_current_trace_recorder
+
+        recorder = get_current_trace_recorder()
+        step_ctx = (
+            recorder.step("sufficiency_check", current_goal="判断本地证据充分性")
+            if recorder else nullcontext()
         )
+
+        with step_ctx as step:
+            query = get_main_query(state)
+            intent = str(state.get("intent", "") or "")
+            reranked = list(state.get("reranked_results", []) or [])
+            sufficiency_result = self.sufficiency_checker.check(query, reranked)
+            fallback_decision = self.fallback_policy.decide(
+                query=query,
+                intent=intent,
+                sufficiency=sufficiency_result,
+                candidates=reranked,
+            )
+            if step:
+                step.tool_result_summary = {
+                    "sufficient": sufficiency_result.sufficient,
+                    "evidence_count": len(reranked),
+                    "fallback_action": fallback_decision.action.value,
+                }
         return FireAgentState(
             evidence_sufficient=sufficiency_result.sufficient,
             sufficiency_result=sufficiency_result,
@@ -260,6 +361,14 @@ class FireAgentGraphNodes:
 
     def web_search_node(self, state: FireAgentState) -> FireAgentState:
         """本地证据不足时执行 Tavily 联网搜索，并与本地证据统一重排。"""
+        from fireagent.observability import get_current_trace_recorder
+
+        recorder = get_current_trace_recorder()
+        step_ctx = (
+            recorder.step("web_search", current_goal="本地证据不足时联网搜索")
+            if recorder else nullcontext()
+        )
+
         query = get_main_query(state)
         local_results = list(state.get("reranked_results", []) or [])
         if not self.context.config.rag.enable_web_fallback:
@@ -269,31 +378,51 @@ class FireAgentGraphNodes:
                 errors=["联网兜底已被配置关闭。"],
             )
 
-        try:
-            response = TavilySearchClient(config=self.context.config).search(query)
-            web_chunks = self.web_parser.parse_response(response)
-            combined = WebEvidenceBuilder(
-                reranker=LexicalReranker(),
-                config=self.context.config,
-            ).combine_and_rerank(
-                query=query,
-                local_results=local_results,
-                web_chunks=web_chunks,
-                top_k=self.context.config.retrieval.rerank_top_k,
-            )
-            return FireAgentState(web_results=web_chunks, reranked_results=combined)
-        except Exception as exc:  # noqa: BLE001
-            return FireAgentState(
-                web_results=[],
-                reranked_results=local_results,
-                errors=[f"web_search_node 失败：{exc}"],
-            )
+        with step_ctx as step:
+            try:
+                response = TavilySearchClient(config=self.context.config).search(query)
+                web_chunks = self.web_parser.parse_response(response)
+                combined = WebEvidenceBuilder(
+                    reranker=LexicalReranker(),
+                    config=self.context.config,
+                ).combine_and_rerank(
+                    query=query,
+                    local_results=local_results,
+                    web_chunks=web_chunks,
+                    top_k=self.context.config.retrieval.rerank_top_k,
+                )
+                if step:
+                    step.tool_result_summary = {"web_count": len(web_chunks)}
+                return FireAgentState(web_results=web_chunks, reranked_results=combined)
+            except Exception as exc:  # noqa: BLE001
+                if step:
+                    step.status = "skipped"
+                    step.error = str(exc)[:500]
+                return FireAgentState(
+                    web_results=[],
+                    reranked_results=local_results,
+                    errors=[f"web_search_node 失败：{exc}"],
+                )
 
     def context_build_node(self, state: FireAgentState) -> FireAgentState:
         """构建最终回答上下文和引用列表。"""
-        query = get_main_query(state)
-        reranked = list(state.get("reranked_results", []) or [])
-        context_result = self.context_builder.build(reranked, query=query)
+        from fireagent.observability import get_current_trace_recorder
+
+        recorder = get_current_trace_recorder()
+        step_ctx = (
+            recorder.step("context_build", current_goal="构建最终回答上下文")
+            if recorder else nullcontext()
+        )
+
+        with step_ctx as step:
+            query = get_main_query(state)
+            reranked = list(state.get("reranked_results", []) or [])
+            context_result = self.context_builder.build(reranked, query=query)
+            if step:
+                step.tool_result_summary = {
+                    "final_context_chars": len(context_result.final_context or ""),
+                    "candidate_citation_count": len(context_result.candidate_citations or []),
+                }
         return FireAgentState(
             context_result=context_result,
             final_context=context_result.final_context,
@@ -307,99 +436,133 @@ class FireAgentGraphNodes:
         优先使用正式 LLM 客户端；如果 LLM 未启用、配置缺失或调用失败，则回退到
         证据模板生成，保证系统仍可返回有边界的答案。
         """
-        fallback_answer = generate_answer_from_state(state)
-        intent = str(state.get("intent", "") or "")
-        final_context = str(state.get("final_context", "") or "").strip()
+        from fireagent.observability import get_current_trace_recorder
 
-        # 检查 fallback decision，处理特殊动作
-        fallback_decision = state.get("fallback_decision")
-        if fallback_decision is not None:
-            action = getattr(fallback_decision, "action", None)
-            reason = getattr(fallback_decision, "reason", "")
-            if action == FallbackAction.REFUSE:
+        recorder = get_current_trace_recorder()
+        step_ctx = (
+            recorder.step("answer_generate", current_goal="生成最终回答")
+            if recorder else nullcontext()
+        )
+
+        with step_ctx as step:
+            fallback_answer = generate_answer_from_state(state)
+            intent = str(state.get("intent", "") or "")
+            final_context = str(state.get("final_context", "") or "").strip()
+
+            # 检查 fallback decision，处理特殊动作
+            fallback_decision = state.get("fallback_decision")
+            if fallback_decision is not None:
+                action = getattr(fallback_decision, "action", None)
+                reason = getattr(fallback_decision, "reason", "")
+                if action == FallbackAction.REFUSE:
+                    if step:
+                        step.tool_result_summary = {"answer_chars": 53, "llm_used": False, "fallback_action": "REFUSE"}
+                    return FireAgentState(
+                        final_answer="抱歉，我无法回答涉及纵火、规避消防检查等危险行为的问题。如遇火灾紧急情况，请立即拨打 119。",
+                        citations=[],
+                        used_citations=[],
+                        used_citation_markers=[],
+                        invalid_citation_markers=[],
+                    )
+                if action == FallbackAction.ANSWER_INSUFFICIENT:
+                    if step:
+                        step.tool_result_summary = {"llm_used": False, "fallback_action": "ANSWER_INSUFFICIENT"}
+                    return FireAgentState(
+                        final_answer=f"当前知识库中没有找到足够的本地论文证据来回答该问题。{f'（原因：{reason}）' if reason else ''}",
+                        citations=[],
+                        used_citations=[],
+                        used_citation_markers=[],
+                        invalid_citation_markers=[],
+                    )
+                if action == FallbackAction.ASK_CLARIFY:
+                    if step:
+                        step.tool_result_summary = {"llm_used": False, "fallback_action": "ASK_CLARIFY"}
+                    return FireAgentState(
+                        final_answer="这个问题里的指代还不够明确。请补充具体论文、事故、标准名称，或说明你希望我基于哪一批本地资料回答。",
+                        citations=[],
+                        used_citations=[],
+                        used_citation_markers=[],
+                        invalid_citation_markers=[],
+                    )
+
+            if intent in {"chat", "reject"} or not final_context or not self.context.config.llm.enabled:
+                if step:
+                    step.tool_result_summary = {"answer_chars": len(fallback_answer), "llm_used": False}
                 return FireAgentState(
-                    final_answer="抱歉，我无法回答涉及纵火、规避消防检查等危险行为的问题。如遇火灾紧急情况，请立即拨打 119。",
+                    final_answer=fallback_answer,
                     citations=[],
                     used_citations=[],
                     used_citation_markers=[],
                     invalid_citation_markers=[],
                 )
-            if action == FallbackAction.ANSWER_INSUFFICIENT:
+
+            try:
+                prompt = self.prompt_loader.render(
+                    "answer_generation",
+                    user_query=state_get_query(state),
+                    intent=intent,
+                    conversation_context=str(state.get("conversation_context", "") or ""),
+                    long_term_memories=str(state.get("long_term_memories", "") or ""),
+                    final_context=final_context,
+                    safety_notice=str(state.get("safety_notice", "") or ""),
+                )
+                response = self.llm_client.generate(
+                    [
+                        LLMMessage(
+                            role="system",
+                            content="你是 FireAgent，必须严格基于给定证据回答火灾领域问题。",
+                        ),
+                        LLMMessage(role="user", content=prompt),
+                    ]
+                )
+                answer = response.content.strip()
+                markers, used, used_strings, invalid = build_used_citation_result(
+                    answer,
+                    list(state.get("candidate_citations", []) or []),
+                )
+                if step:
+                    step.tool_result_summary = {"answer_chars": len(answer), "llm_used": True, "used_marker_count": len(markers)}
                 return FireAgentState(
-                    final_answer=f"当前知识库中没有找到足够的本地论文证据来回答该问题。{f'（原因：{reason}）' if reason else ''}",
+                    final_answer=answer,
+                    citations=used_strings,
+                    used_citation_markers=markers,
+                    used_citations=used,
+                    invalid_citation_markers=invalid,
+                )
+            except Exception as exc:  # noqa: BLE001 - LLM 失败时回退模板回答。
+                if step:
+                    step.status = "failed"
+                    step.error = str(exc)[:500]
+                    step.tool_result_summary = {"answer_chars": len(fallback_answer), "llm_used": False}
+                return FireAgentState(
+                    final_answer=fallback_answer,
                     citations=[],
                     used_citations=[],
                     used_citation_markers=[],
                     invalid_citation_markers=[],
+                    errors=[f"answer_generate_node LLM 回退：{exc}"],
                 )
-            if action == FallbackAction.ASK_CLARIFY:
-                return FireAgentState(
-                    final_answer="这个问题里的指代还不够明确。请补充具体论文、事故、标准名称，或说明你希望我基于哪一批本地资料回答。",
-                    citations=[],
-                    used_citations=[],
-                    used_citation_markers=[],
-                    invalid_citation_markers=[],
-                )
-
-        if intent in {"chat", "reject"} or not final_context or not self.context.config.llm.enabled:
-            return FireAgentState(
-                final_answer=fallback_answer,
-                citations=[],
-                used_citations=[],
-                used_citation_markers=[],
-                invalid_citation_markers=[],
-            )
-
-        try:
-            prompt = self.prompt_loader.render(
-                "answer_generation",
-                user_query=state_get_query(state),
-                intent=intent,
-                conversation_context=str(state.get("conversation_context", "") or ""),
-                long_term_memories=str(state.get("long_term_memories", "") or ""),
-                final_context=final_context,
-                safety_notice=str(state.get("safety_notice", "") or ""),
-            )
-            response = self.llm_client.generate(
-                [
-                    LLMMessage(
-                        role="system",
-                        content="你是 FireAgent，必须严格基于给定证据回答火灾领域问题。",
-                    ),
-                    LLMMessage(role="user", content=prompt),
-                ]
-            )
-            answer = response.content.strip()
-            markers, used, used_strings, invalid = build_used_citation_result(
-                answer,
-                list(state.get("candidate_citations", []) or []),
-            )
-            return FireAgentState(
-                final_answer=answer,
-                citations=used_strings,
-                used_citation_markers=markers,
-                used_citations=used,
-                invalid_citation_markers=invalid,
-            )
-        except Exception as exc:  # noqa: BLE001 - LLM 失败时回退模板回答。
-            return FireAgentState(
-                final_answer=fallback_answer,
-                citations=[],
-                used_citations=[],
-                used_citation_markers=[],
-                invalid_citation_markers=[],
-                errors=[f"answer_generate_node LLM 回退：{exc}"],
-            )
 
     def hallucination_check_node(self, state: FireAgentState) -> FireAgentState:
         """执行轻量幻觉检查，确保无证据时明确说明不足。"""
-        warnings: list[str] = []
-        intent = str(state.get("intent", "") or "")
-        answer = str(state.get("final_answer", "") or "")
-        final_context = str(state.get("final_context", "") or "")
-        if intent not in {"chat", "reject"} and not final_context and "证据不足" not in answer:
-            warnings.append("回答缺少证据不足提示，已在节点中标记。")
-            answer = f"{answer}\n\n不确定性：当前证据不足，不能给出确定结论。"
+        from fireagent.observability import get_current_trace_recorder
+
+        recorder = get_current_trace_recorder()
+        step_ctx = (
+            recorder.step("hallucination_check", current_goal="轻量幻觉检测")
+            if recorder else nullcontext()
+        )
+
+        with step_ctx as step:
+            warnings: list[str] = []
+            intent = str(state.get("intent", "") or "")
+            answer = str(state.get("final_answer", "") or "")
+            final_context = str(state.get("final_context", "") or "")
+            if intent not in {"chat", "reject"} and not final_context and "证据不足" not in answer:
+                warnings.append("回答缺少证据不足提示，已在节点中标记。")
+                answer = f"{answer}\n\n不确定性：当前证据不足，不能给出确定结论。"
+            if step:
+                step.tool_result_summary = {"warning_count": len(warnings)}
         return FireAgentState(final_answer=answer, hallucination_warnings=warnings)
 
 
