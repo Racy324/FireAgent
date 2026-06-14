@@ -8,7 +8,8 @@ import time
 from collections.abc import Generator
 from typing import Optional
 
-from fireagent.graph.nodes import FireAgentGraphNodes, route_intent, generate_answer_from_state
+from fireagent.graph.llm_router import LLMIntentRouter
+from fireagent.graph.nodes import generate_answer_from_state
 from fireagent.graph.state import FireAgentState, create_initial_state
 from fireagent.llm import BaseLLMClient, LLMMessage
 from fireagent.prompts import PromptTemplateLoader
@@ -38,6 +39,14 @@ def _sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _final_evidence_sufficient(answer: str, raw_sufficient: bool, used_citations: list) -> bool:
+    """把检索充分性收敛为最终回答可展示的证据状态。"""
+    if not raw_sufficient or not used_citations:
+        return False
+    insufficient_markers = ("证据不足", "无法回答", "不能回答")
+    return not any(marker in answer for marker in insufficient_markers)
+
+
 def run_streaming_workflow(
     user_query: str,
     config: Optional[FireAgentConfig] = None,
@@ -61,14 +70,23 @@ def run_streaming_workflow(
     start_time = time.time()
 
     # ── 1. 意图路由 ──
-    intent, intent_reason = route_intent(user_query)
+    route_result = LLMIntentRouter(config=cfg, llm_client=llm_client).route(
+        query=user_query,
+        conversation_context=conversation_context,
+        long_term_memories=long_term_memories,
+    )
+    intent = route_result.intent
     state["intent"] = intent
-    state["intent_reason"] = intent_reason
-    if intent == "emergency":
+    state["intent_reason"] = route_result.reason
+    state["route_decision"] = route_result.model_dump()
+    if intent == "emergency" or route_result.need_safety_notice:
         state["safety_notice"] = (
             "⚠️ 如果您正在经历火灾或紧急情况，请立即拨打 119 报警并撤离现场。"
         )
-    yield _sse_event("stage", {"stage": "intent", "value": intent})
+    yield _sse_event(
+        "stage",
+        {"stage": "intent", "value": intent, "route_decision": state["route_decision"]},
+    )
 
     # ── chat/reject 直接回答 ──
     if intent in ("chat", "reject"):
@@ -81,6 +99,7 @@ def run_streaming_workflow(
             "used_citation_markers": [],
             "invalid_citation_markers": [],
             "intent": intent,
+            "route_decision": state.get("route_decision", {}),
             "evidence_sufficient": False,
             "elapsed": round(time.time() - start_time, 2),
         })
@@ -162,6 +181,7 @@ def run_streaming_workflow(
             "used_citation_markers": [],
             "invalid_citation_markers": [],
             "intent": intent,
+            "route_decision": state.get("route_decision", {}),
             "evidence_sufficient": False,
             "safety_notice": str(state.get("safety_notice", "") or ""),
             "fallback": {"action": fallback_decision.action.value, "reason": fallback_decision.reason},
@@ -179,6 +199,7 @@ def run_streaming_workflow(
             "used_citation_markers": [],
             "invalid_citation_markers": [],
             "intent": intent,
+            "route_decision": state.get("route_decision", {}),
             "evidence_sufficient": False,
             "fallback": {"action": fallback_decision.action.value, "reason": fallback_decision.reason},
             "elapsed": round(time.time() - start_time, 2),
@@ -195,6 +216,7 @@ def run_streaming_workflow(
             "used_citation_markers": [],
             "invalid_citation_markers": [],
             "intent": intent,
+            "route_decision": state.get("route_decision", {}),
             "evidence_sufficient": False,
             "fallback": {"action": fallback_decision.action.value, "reason": fallback_decision.reason},
             "elapsed": round(time.time() - start_time, 2),
@@ -286,6 +308,11 @@ def run_streaming_workflow(
         full_answer,
         candidate_citations,
     )
+    evidence_sufficient = _final_evidence_sufficient(
+        full_answer,
+        bool(state.get("evidence_sufficient", False)),
+        used,
+    )
 
     # ── 11. 完成 ──
     fallback_info = {}
@@ -302,7 +329,8 @@ def run_streaming_workflow(
         "used_citation_markers": markers,
         "invalid_citation_markers": invalid,
         "intent": intent,
-        "evidence_sufficient": bool(state.get("evidence_sufficient", False)),
+        "route_decision": state.get("route_decision", {}),
+        "evidence_sufficient": evidence_sufficient,
         "safety_notice": str(state.get("safety_notice", "") or ""),
         "fallback": fallback_info,
         "elapsed": round(time.time() - start_time, 2),

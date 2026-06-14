@@ -141,6 +141,23 @@ class LLMConfig(ConfigSection):
     enabled: bool = True
 
 
+class RouterConfig(ConfigSection):
+    """意图路由小模型配置。"""
+
+    enabled: bool = True
+    mode: Literal["hybrid", "shadow", "rules"] = "hybrid"
+    provider: str = "openai_compatible"
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+    temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=200, gt=0)
+    timeout: float = Field(default=10.0, gt=0)
+    confidence_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
+    low_confidence_threshold: float = Field(default=0.55, ge=0.0, le=1.0)
+    fallback_to_rules: bool = True
+
+
 class HNSWConfig(ConfigSection):
     """Qdrant HNSW index settings."""
 
@@ -315,6 +332,7 @@ class FireAgentConfig(ConfigSection):
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     reranker: RerankerConfig = Field(default_factory=RerankerConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    router: RouterConfig = Field(default_factory=RouterConfig)
     qdrant: QdrantConfig = Field(default_factory=QdrantConfig)
     tavily: TavilyConfig = Field(default_factory=TavilyConfig)
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
@@ -348,6 +366,18 @@ ENV_TO_CONFIG_PATH: dict[str, tuple[str, ...]] = {
     "OPENAI_COMPATIBLE_TIMEOUT": ("llm", "timeout"),
     "ENABLE_LLM_ANSWER": ("llm", "enabled"),
     "LLM_PROVIDER": ("llm", "provider"),
+    "ROUTER_ENABLED": ("router", "enabled"),
+    "ROUTER_MODE": ("router", "mode"),
+    "ROUTER_PROVIDER": ("router", "provider"),
+    "ROUTER_BASE_URL": ("router", "base_url"),
+    "ROUTER_API_KEY": ("router", "api_key"),
+    "ROUTER_MODEL": ("router", "model"),
+    "ROUTER_TEMPERATURE": ("router", "temperature"),
+    "ROUTER_MAX_TOKENS": ("router", "max_tokens"),
+    "ROUTER_TIMEOUT": ("router", "timeout"),
+    "ROUTER_CONFIDENCE_THRESHOLD": ("router", "confidence_threshold"),
+    "ROUTER_LOW_CONFIDENCE_THRESHOLD": ("router", "low_confidence_threshold"),
+    "ROUTER_FALLBACK_TO_RULES": ("router", "fallback_to_rules"),
     "EMBEDDING_PROVIDER": ("embedding", "provider"),
     "EMBEDDING_MODEL_NAME": ("embedding", "model_name"),
     "EMBEDDING_BASE_URL": ("embedding", "base_url"),

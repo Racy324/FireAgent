@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
+from uuid import UUID
 
 from fireagent.memory.long_term_schema import LongTermMemoryRecord
 from fireagent.memory.long_term_store import LongTermMemoryStore, new_memory_id
@@ -135,6 +136,13 @@ def test_create_memory_collection_recreate() -> None:
     store.create_collection()
     store.create_collection(recreate=True)
     assert "fireagent_memories" in client.collections
+
+
+def test_new_memory_id_is_qdrant_compatible_uuid() -> None:
+    """Qdrant point ID 必须是 UUID 或无符号整数。"""
+    memory_id = new_memory_id()
+
+    assert str(UUID(memory_id)) == memory_id
 
 
 def test_upsert_memory_writes_payload_and_vector() -> None:

@@ -10,7 +10,10 @@ from fireagent.memory.long_term_schema import MemoryCandidate, MemoryType
 # ── 高价值信号 ──
 
 _PREFERENCE_PATTERNS = re.compile(
-    r"(以后都|默认|我希望|我不想|以后.*也|固定采用|一直用|始终|偏好)",
+    r"(以后|以后都|默认|我希望|我不想|以后.*也|固定采用|一直用|始终|一律|统一|全部|偏好)",
+)
+_LANGUAGE_PREFERENCE_PATTERNS = re.compile(
+    r"(以后|默认|一律|统一|全部|始终).{0,30}(中文|英文|中英文|语言|笔记|回答|输出)",
 )
 _PROJECT_FACT_PATTERNS = re.compile(
     r"(这个项目|本项目|FireAgent|fireagent).{0,20}(使用|采用|不用|不做|基于|部署在)",
@@ -52,10 +55,20 @@ def score_candidate(text: str) -> tuple[float, float, str, MemoryType, list[str]
 
     # 高价值信号
     if _PREFERENCE_PATTERNS.search(normalized):
-        score += 0.45
-        confidence = 0.8
+        score += 0.55
+        confidence = 0.82
         reasons.append("明确偏好表达")
         tags.append("preference")
+        memory_type = "semantic"
+
+    if _LANGUAGE_PREFERENCE_PATTERNS.search(normalized):
+        score += 0.25
+        confidence = max(confidence, 0.85)
+        reasons.append("持续语言偏好")
+        if "preference" not in tags:
+            tags.append("preference")
+        if "language" not in tags:
+            tags.append("language")
         memory_type = "semantic"
 
     if _PROJECT_FACT_PATTERNS.search(normalized):

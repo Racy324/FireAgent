@@ -135,6 +135,38 @@ def test_chat_api_returns_empty_citations_for_fallback(monkeypatch, tmp_path) ->
     assert payload["invalid_citation_markers"] == []
 
 
+def test_chat_marks_answer_insufficient_when_no_used_citations(monkeypatch, tmp_path) -> None:
+    """最终回答自称证据不足且没有实际引用时，不应向前端返回证据充足。"""
+    cfg = FireAgentConfig()
+    cfg.memory.database_path = str(tmp_path / "fireagent.db")
+
+    def fake_workflow(user_query, **_kwargs):
+        return FireAgentState(
+            user_query=user_query,
+            intent="rag",
+            final_answer="证据不足，无法回答您之前问过什么火灾问题。",
+            evidence_sufficient=True,
+            citations=["[L1] 无关论文"],
+            used_citation_markers=[],
+            used_citations=[],
+            invalid_citation_markers=[],
+            errors=[],
+        )
+
+    monkeypatch.setattr("fireagent.api.server.run_fireagent_workflow", fake_workflow)
+    app = create_app(config=cfg)
+    client = TestClient(app)
+
+    response = client.post("/chat", json={"query": "之前问过什么火灾问题？"})
+    payload = response.json()
+    session_id = payload["session_id"]
+    messages = client.get(f"/sessions/{session_id}/messages").json()["messages"]
+
+    assert response.status_code == 200
+    assert payload["evidence_sufficient"] is False
+    assert messages[1]["metadata"]["evidence_sufficient"] is False
+
+
 def test_chat_injects_long_term_memories(monkeypatch, tmp_path) -> None:
     """长期记忆应被检索并传入 workflow。"""
     cfg = FireAgentConfig()

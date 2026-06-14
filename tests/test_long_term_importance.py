@@ -15,6 +15,19 @@ def test_extracts_explicit_user_preference() -> None:
     assert "偏好" in reason or "明确" in reason
 
 
+def test_future_language_preference_exceeds_default_write_threshold() -> None:
+    """未来持续生效的输出语言偏好应能超过默认长期记忆写入阈值。"""
+    importance, confidence, reason, mem_type, tags = score_candidate(
+        "以后有关火灾的笔记全部用中文"
+    )
+
+    assert importance >= 0.72
+    assert confidence >= 0.65
+    assert mem_type == "semantic"
+    assert "preference" in tags
+    assert "偏好" in reason
+
+
 def test_extracts_project_fact() -> None:
     """项目事实应被识别。"""
     importance, _, reason, _, tags = score_candidate(

@@ -7,7 +7,8 @@ export default defineConfig({
     port: 3000,
     proxy: {
       '/api': 'http://localhost:8000',
-      '/chat': 'http://localhost:8000',
+      '/chat/stream': 'http://localhost:8000',
+      '/sessions': 'http://localhost:8000',
       '/health': 'http://localhost:8000',
       '/papers': 'http://localhost:8000',
       '/ingest': 'http://localhost:8000',

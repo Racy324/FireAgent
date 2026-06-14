@@ -22,6 +22,7 @@ class FireAgentState(TypedDict, total=False):
     rewrite_result: Any
     intent: str
     intent_reason: str
+    route_decision: dict[str, Any]
     local_dense_results: list[Any]
     local_sparse_results: list[Any]
     fused_results: list[Any]
@@ -60,6 +61,7 @@ def create_initial_state(
         conversation_context=conversation_context,
         rewritten_queries=[],
         intent="",
+        route_decision={},
         local_dense_results=[],
         local_sparse_results=[],
         fused_results=[],

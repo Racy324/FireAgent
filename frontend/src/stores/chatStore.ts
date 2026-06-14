@@ -84,6 +84,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   sendMessage: (query: string) => {
+    if (get().isStreaming) return
+
     const sessionId = get().currentSessionId
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,

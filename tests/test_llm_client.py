@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fireagent.graph.nodes import FireAgentGraphNodes
+from fireagent.llm.openai_compatible import OpenAICompatibleLLMClient
 from fireagent.llm import BaseLLMClient, LLMMessage, LLMResponse
 from fireagent.utils.config import FireAgentConfig
 
@@ -64,3 +65,46 @@ def test_ollama_embedding_and_local_flagembedding_reranker_config_is_supported()
     assert config.embedding.model_name == "bge-m3"
     assert config.reranker.provider == "flagembedding"
     assert config.reranker.model_name == "models/bge-reranker-v2-m3"
+
+
+def test_openai_compatible_extracts_json_from_reasoning_when_content_empty() -> None:
+    """Ollama/Qwen3 可能把 JSON 放在 reasoning 中，content 为空时应兼容提取。"""
+    raw = {
+        "model": "qwen3:8b",
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "reasoning": '思考过程...\n{"intent":"rag","confidence":0.9}',
+                }
+            }
+        ],
+    }
+
+    content = OpenAICompatibleLLMClient._extract_content(raw)
+
+    assert '{"intent":"rag","confidence":0.9}' in content
+
+
+def test_openai_compatible_rejects_reasoning_without_json_when_content_empty() -> None:
+    """content 为空且 reasoning 不含 JSON 时，应判定为无有效内容。"""
+    raw = {
+        "model": "qwen3:8b",
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "reasoning": "只有思考过程，没有最终 JSON。",
+                }
+            }
+        ],
+    }
+
+    try:
+        OpenAICompatibleLLMClient._extract_content(raw)
+    except Exception as exc:  # noqa: BLE001
+        assert "内容为空" in str(exc) or "reasoning" in str(exc)
+    else:
+        raise AssertionError("reasoning 不含 JSON 时不应返回内容")

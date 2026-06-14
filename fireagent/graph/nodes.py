@@ -6,6 +6,12 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
+from fireagent.graph.llm_router import (
+    LLMIntentRouter,
+    is_history_query,
+    is_memory_query,
+    is_preference_instruction,
+)
 from fireagent.graph.state import FireAgentState, state_get_query
 from fireagent.llm import BaseLLMClient, LLMMessage, create_llm_client
 from fireagent.prompts import PromptTemplateLoader
@@ -32,6 +38,51 @@ from fireagent.websearch import TavilySearchClient, WebEvidenceBuilder, WebSearc
 
 
 CHAT_PATTERNS = ("你好", "您好", "hello", "hi", "你是谁", "谢谢", "感谢")
+PREFERENCE_INSTRUCTION_PATTERNS = (
+    "默认",
+    "我希望",
+    "我不想",
+    "固定采用",
+    "一直用",
+    "始终",
+    "一律",
+    "统一",
+    "全部用",
+    "都用",
+    "偏好是",
+    "偏好设置",
+)
+PREFERENCE_INSTRUCTION_REGEX = re.compile(
+    r"(以后|默认|始终|一律|统一|全部|都).{0,30}(笔记|回答|输出|语言|中文|英文|格式)"
+)
+MEMORY_QUERY_PATTERNS = (
+    "我的偏好",
+    "偏好有什么",
+    "偏好是什么",
+    "长期记忆",
+    "记住了什么",
+    "你记得什么",
+    "我设置过",
+    "我之前设置",
+    "应该用什么格式",
+    "用什么格式",
+    "用什么语言",
+    "标题前缀",
+    "标题前加",
+)
+MEMORY_QUERY_REGEX = re.compile(
+    r"(笔记|回答|输出|标题|格式|语言).{0,20}(应该|需要|用什么|怎么|如何|是什么)"
+)
+HISTORY_QUERY_PATTERNS = (
+    "之前问过",
+    "刚才问过",
+    "前面问过",
+    "上次问过",
+    "上一条问题",
+    "历史问题",
+    "问过什么",
+    "刚才的问题",
+)
 PAPER_PATTERNS = ("总结", "综述", "概括", "对比", "比较", "论文", "文献", "作者", "摘要")
 EMERGENCY_PATTERNS = ("怎么办", "如何逃生", "应急", "报警", "疏散路线", "自救", "逃生", "灭火器")
 FIRE_DOMAIN_PATTERNS = (
@@ -84,6 +135,7 @@ class FireAgentGraphNodes:
         self.context_builder = ContextBuilder(config=self.context.config)
         self.web_parser = WebSearchResultParser(config=self.context.config)
         self.prompt_loader = PromptTemplateLoader(config=self.context.config)
+        self.intent_router = LLMIntentRouter(config=self.context.config)
 
     @property
     def vectorstore(self) -> FireAgentQdrantClient:
@@ -109,11 +161,22 @@ class FireAgentGraphNodes:
     def intent_router_node(self, state: FireAgentState) -> FireAgentState:
         """识别用户问题意图，并写入 intent。"""
         query = state_get_query(state)
-        intent, reason = route_intent(query)
+        route_result = self.intent_router.route(
+            query=query,
+            conversation_context=str(state.get("conversation_context", "") or ""),
+            long_term_memories=str(state.get("long_term_memories", "") or ""),
+        )
+        intent = route_result.intent
+        reason = route_result.reason
         safety_notice = ""
-        if intent == "emergency":
+        if intent == "emergency" or route_result.need_safety_notice:
             safety_notice = "安全提醒：如现场存在明火、浓烟、爆炸或人员受困，请立即拨打 119，并优先撤离到安全区域。"
-        return FireAgentState(intent=intent, intent_reason=reason, safety_notice=safety_notice)
+        return FireAgentState(
+            intent=intent,
+            intent_reason=reason,
+            route_decision=route_result.model_dump(),
+            safety_notice=safety_notice,
+        )
 
     def query_rewrite_node(self, state: FireAgentState) -> FireAgentState:
         """对用户问题进行查询改写。"""
@@ -342,22 +405,8 @@ class FireAgentGraphNodes:
 
 def route_intent(query: str) -> tuple[str, str]:
     """基于规则识别用户意图。"""
-    normalized = query.strip().lower()
-    if not normalized:
-        return "chat", "空问题，按闲聊处理。"
-    if any(pattern in normalized for pattern in CHAT_PATTERNS) and len(normalized) <= 30:
-        return "chat", "命中闲聊问候模式。"
-    if any(pattern in query for pattern in EMERGENCY_PATTERNS) and any(
-        pattern in query for pattern in FIRE_DOMAIN_PATTERNS
-    ):
-        return "emergency", "命中火灾应急安全类问题。"
-    if any(pattern in query for pattern in PAPER_PATTERNS) and any(
-        pattern in query for pattern in FIRE_DOMAIN_PATTERNS
-    ):
-        return "paper", "命中论文总结/对比类问题。"
-    if any(pattern in query for pattern in FIRE_DOMAIN_PATTERNS):
-        return "rag", "命中火灾领域知识问答。"
-    return "reject", "未命中火灾领域关键词。"
+    result = LLMIntentRouter().route(query=query)
+    return result.intent, result.reason
 
 
 def get_main_query(state: FireAgentState) -> str:
@@ -373,6 +422,18 @@ def generate_answer_from_state(state: FireAgentState) -> str:
     query = state_get_query(state)
     intent = str(state.get("intent", "") or "")
     if intent == "chat":
+        if _is_history_query(query):
+            return _answer_history_query(
+                query,
+                str(state.get("conversation_context", "") or ""),
+            )
+        if _is_preference_instruction(query):
+            return _answer_preference_instruction(query)
+        if _is_memory_query(query):
+            return _answer_memory_query(
+                query,
+                str(state.get("long_term_memories", "") or ""),
+            )
         return "你好，我是 FireAgent，可以围绕火灾论文知识库回答火灾机理、烟气控制、疏散、检测预警和消防安全等问题。"
     if intent == "reject":
         return "抱歉，我主要回答火灾与消防安全领域问题。你可以把问题改写为与火灾机理、消防管理、疏散、检测预警或应急安全相关的方向。"
@@ -427,6 +488,113 @@ def summarize_context(context: str, max_chars: int = 450) -> str:
     if len(text) <= max_chars:
         return text
     return f"{text[:max_chars].rstrip()}..."
+
+
+def _is_history_query(query: str) -> bool:
+    """判断是否在询问当前会话历史。"""
+    return is_history_query(query)
+
+
+def _is_memory_query(query: str) -> bool:
+    """判断是否在询问已保存的长期记忆或用户偏好。"""
+    return is_memory_query(query)
+
+
+def _is_preference_instruction(query: str) -> bool:
+    """判断是否为用户偏好或长期记忆写入指令。"""
+    return is_preference_instruction(query)
+
+
+def _answer_preference_instruction(query: str) -> str:
+    """确认用户偏好指令。"""
+    cleaned = " ".join(query.strip().split()).rstrip("。！？!?. ")
+    return (
+        "直接回答\n"
+        f"已记录：{cleaned}。\n\n"
+        "依据说明\n"
+        "这是用户偏好/长期记忆指令，不是火灾论文知识问题，因此不会触发 RAG 检索，也不需要论文引用。"
+    )
+
+
+def _answer_memory_query(query: str, long_term_memories: str) -> str:
+    """从已检索的长期记忆中回答偏好/记忆查询。"""
+    memories = _extract_memory_lines(long_term_memories)
+    if "火灾" in query or "笔记" in query:
+        focused = [
+            memory for memory in memories
+            if any(keyword in memory for keyword in ("火灾", "笔记", "中文", "英文", "标题", "格式"))
+        ]
+        if focused:
+            memories = focused
+
+    if not memories:
+        return (
+            "直接回答\n"
+            "我没有检索到与你这个问题相关的长期记忆。\n\n"
+            "依据说明\n"
+            "这个问题是在询问用户偏好/长期记忆，不是火灾论文知识问题，因此不会触发 RAG 检索。"
+            "如果你刚刚设置过偏好，请确认长期记忆服务和 Qdrant 已启动，并且当前会话已经完成一次回答写入。"
+        )
+
+    lines = "\n".join(f"- {memory}" for memory in memories[:5])
+    return (
+        "直接回答\n"
+        f"根据长期记忆，你的相关偏好是：\n{lines}\n\n"
+        "依据说明\n"
+        "这个回答来自已检索到的长期记忆，不是论文 RAG 证据，因此不需要论文引用。"
+    )
+
+
+def _extract_memory_lines(long_term_memories: str) -> list[str]:
+    """清理 prompt 中的长期记忆条目，提取可展示文本。"""
+    memories: list[str] = []
+    for line in long_term_memories.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        stripped = re.sub(r"^-\s*\[[^\]]+\]\s*", "", stripped)
+        stripped = stripped.lstrip("- ").strip()
+        if stripped:
+            memories.append(stripped)
+    return memories
+
+
+def _answer_history_query(query: str, conversation_context: str) -> str:
+    """从短期上下文中回答历史问题查询。"""
+    user_questions = _extract_user_questions(conversation_context)
+    if "火灾" in query or "消防" in query:
+        user_questions = [
+            question for question in user_questions
+            if any(pattern in question for pattern in FIRE_DOMAIN_PATTERNS)
+        ]
+
+    if not user_questions:
+        return (
+            "直接回答\n"
+            "我当前没有读到可用于回答这个问题的历史用户提问。请确认你是在同一个会话中继续提问，"
+            "并且前端请求带上了当前 session_id。"
+        )
+
+    lines = "\n".join(f"- {question}" for question in user_questions[-8:])
+    return (
+        "直接回答\n"
+        f"你之前问过这些相关问题：\n{lines}\n\n"
+        "依据说明\n"
+        "这个回答来自当前会话的短期上下文，不使用 RAG 论文证据，因此不需要论文引用。"
+    )
+
+
+def _extract_user_questions(conversation_context: str) -> list[str]:
+    """从短期上下文文本中提取历史用户问题。"""
+    questions: list[str] = []
+    for line in conversation_context.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("用户："):
+            continue
+        question = stripped.removeprefix("用户：").strip()
+        if question:
+            questions.append(question)
+    return questions
 
 
 _DEFAULT_NODES: FireAgentGraphNodes | None = None

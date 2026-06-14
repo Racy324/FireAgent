@@ -246,4 +246,4 @@ def _now() -> str:
 
 def new_memory_id() -> str:
     """生成新的记忆 ID。"""
-    return f"mem_{uuid.uuid4().hex}"
+    return str(uuid.uuid4())

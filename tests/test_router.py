@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fireagent.graph.edges import route_after_intent, route_after_sufficiency
-from fireagent.graph.nodes import FireAgentGraphNodes, route_intent
+from fireagent.graph.nodes import FireAgentGraphNodes, generate_answer_from_state, route_intent
 from fireagent.graph.state import create_initial_state
 
 
@@ -20,6 +20,91 @@ def test_route_intent_fire_rag() -> None:
     intent, _ = route_intent("隧道火灾烟气如何控制")
 
     assert intent == "rag"
+
+
+def test_route_intent_history_question_does_not_enter_rag() -> None:
+    """询问历史问题时即使命中火灾词，也不应进入 RAG。"""
+    intent, reason = route_intent("我之前问过什么火灾问题")
+
+    assert intent == "chat"
+    assert "历史" in reason
+
+
+def test_route_intent_preference_instruction_does_not_enter_rag() -> None:
+    """用户偏好/记忆指令即使命中火灾词，也不应进入 RAG。"""
+    intent, reason = route_intent("以后有关火灾的笔记全部用中文")
+
+    assert intent == "chat"
+    assert "偏好" in reason
+
+
+def test_route_intent_memory_query_does_not_enter_rag() -> None:
+    """询问火灾笔记偏好时，应查询长期记忆而不是进入论文 RAG。"""
+    intent, reason = route_intent("火灾笔记应该用什么格式和语言")
+
+    assert intent == "chat"
+    assert "长期记忆" in reason
+
+
+def test_route_intent_preference_question_is_not_write_instruction() -> None:
+    """询问已有偏好不应被误判为新的偏好写入指令。"""
+    intent, reason = route_intent("我的偏好有什么")
+
+    assert intent == "chat"
+    assert "长期记忆" in reason
+
+
+def test_generate_answer_for_preference_instruction_acknowledges_memory() -> None:
+    """偏好指令应直接确认记录，不应要求 RAG 证据。"""
+    state = create_initial_state("以后有关火灾的笔记全部用中文")
+    state["intent"] = "chat"
+
+    answer = generate_answer_from_state(state)
+
+    assert "已记录" in answer
+    assert "中文" in answer
+    assert "证据不足" not in answer
+    assert "[L1]" not in answer
+
+
+def test_generate_answer_for_memory_query_uses_long_term_memories() -> None:
+    """长期记忆查询应直接复述相关偏好，不应要求论文证据。"""
+    state = create_initial_state(
+        "火灾笔记应该用什么格式和语言",
+        long_term_memories=(
+            "- [semantic | 0.92] 用户偏好：以后所有火灾笔记都用中文，"
+            "并在标题前加【火灾笔记】。"
+        ),
+    )
+    state["intent"] = "chat"
+
+    answer = generate_answer_from_state(state)
+
+    assert "中文" in answer
+    assert "【火灾笔记】" in answer
+    assert "长期记忆" in answer
+    assert "证据不足" not in answer
+    assert "[L1]" not in answer
+
+
+def test_generate_answer_for_history_question_uses_conversation_context() -> None:
+    """历史问题应基于短期上下文回答，而不是论文证据。"""
+    state = create_initial_state(
+        "我之前问过什么火灾问题",
+        conversation_context=(
+            "# 最近对话\n"
+            "用户：隧道火灾烟气对人员疏散有什么影响？\n"
+            "助手：烟气会降低能见度。\n"
+            "用户：今天午饭吃什么？\n"
+        ),
+    )
+    state["intent"] = "chat"
+
+    answer = generate_answer_from_state(state)
+
+    assert "隧道火灾烟气对人员疏散有什么影响" in answer
+    assert "今天午饭吃什么" not in answer
+    assert "[L1]" not in answer
 
 
 def test_route_intent_paper_summary() -> None:
@@ -63,3 +148,14 @@ def test_intent_router_node_adds_safety_notice_for_emergency() -> None:
     assert update["intent"] == "emergency"
     assert "119" in update["safety_notice"]
 
+
+def test_intent_router_node_exposes_route_decision() -> None:
+    """意图路由节点应输出可调试的 route_decision。"""
+    nodes = FireAgentGraphNodes()
+    state = create_initial_state("火灾笔记应该用什么格式和语言")
+
+    update = nodes.intent_router_node(state)
+
+    assert update["intent"] == "chat"
+    assert update["route_decision"]["sub_intent"] == "memory_query"
+    assert update["route_decision"]["source"] == "hard_rule"

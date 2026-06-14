@@ -222,6 +222,7 @@ def create_app(config: Optional[FireAgentConfig] = None) -> object:
                 "used_citation_markers": list(state.get("used_citation_markers", []) or []),
                 "invalid_citation_markers": list(state.get("invalid_citation_markers", []) or []),
                 "hallucination_warnings": state.get("hallucination_warnings", []),
+                "route_decision": state.get("route_decision", {}),
                 "conversation_context": conversation_context,
                 "long_term_memories": long_term_memories,
                 "long_term_memory_count": len(lt_memory_results),
@@ -235,6 +236,11 @@ def create_app(config: Optional[FireAgentConfig] = None) -> object:
         used_citation_markers = list(state.get("used_citation_markers", []) or [])
         invalid_citation_markers = list(state.get("invalid_citation_markers", []) or [])
         citations_strings = list(state.get("citations", []) or [])
+        evidence_sufficient = _final_evidence_sufficient(
+            answer,
+            bool(state.get("evidence_sufficient", False)),
+            used_citations_raw,
+        )
 
         assistant_message_id = ""
         if memory is not None:
@@ -246,7 +252,7 @@ def create_app(config: Optional[FireAgentConfig] = None) -> object:
                 debug=debug,
                 metadata={
                     "user_message_id": user_message_id,
-                    "evidence_sufficient": bool(state.get("evidence_sufficient", False)),
+                    "evidence_sufficient": evidence_sufficient,
                     "used_citations": [item.model_dump() for item in used_citations_raw],
                     "used_citation_markers": used_citation_markers,
                     "invalid_citation_markers": invalid_citation_markers,
@@ -282,7 +288,7 @@ def create_app(config: Optional[FireAgentConfig] = None) -> object:
             session_id=session_id,
             message_id=assistant_message_id,
             intent=str(state.get("intent", "") or ""),
-            evidence_sufficient=bool(state.get("evidence_sufficient", False)),
+            evidence_sufficient=evidence_sufficient,
             citations=citations_strings,
             used_citations=used_citations,
             used_citation_markers=used_citation_markers,
@@ -625,6 +631,14 @@ def _parse_sse_event(event_text: str) -> tuple[str, dict]:
 def _format_sse_event(event: str, data: dict) -> str:
     """格式化 SSE 事件。"""
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _final_evidence_sufficient(answer: str, raw_sufficient: bool, used_citations: list) -> bool:
+    """把检索充分性收敛为最终回答可展示的证据状态。"""
+    if not raw_sufficient or not used_citations:
+        return False
+    insufficient_markers = ("证据不足", "无法回答", "不能回答")
+    return not any(marker in answer for marker in insufficient_markers)
 
 
 def _query_papers_from_qdrant(vs: FireAgentQdrantClient) -> dict:
