@@ -1,6 +1,7 @@
 """FireAgent 混合检索、融合、重排和上下文构建模块。"""
 
 from fireagent.retrieval.candidate_filter import CandidateFilterStats, RegularRAGCandidateFilter
+from fireagent.retrieval.query_parallel import ParallelQueryStats, merge_query_results, retrieve_queries_parallel
 from fireagent.retrieval.context_builder import ContextBuilder, build_context
 from fireagent.retrieval.dense_retriever import DenseRetriever
 from fireagent.retrieval.fallback_policy import FallbackAction, FallbackDecision, FallbackPolicy, decide_fallback
@@ -47,6 +48,7 @@ __all__ = [
     "LexicalReranker",
     "LocalEvidenceSufficiencyChecker",
     "OllamaEmbeddingReranker",
+    "ParallelQueryStats",
     "QueryRewriteResult",
     "QueryRewriter",
     "RerankedRetrievalResult",
@@ -59,6 +61,8 @@ __all__ = [
     "check_local_evidence_sufficiency",
     "create_reranker",
     "decide_fallback",
+    "merge_query_results",
+    "retrieve_queries_parallel",
     "rewrite_query",
     "weighted_rrf",
 ]

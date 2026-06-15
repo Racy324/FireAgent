@@ -235,10 +235,19 @@ class FireAgentGraphNodes:
                 rewrite_result = state.get("rewrite_result")
                 if rewrite_result is None:
                     rewrite_result = self.query_rewriter.rewrite(state_get_query(state))
-                results = DenseRetriever(self.vectorstore, config=self.context.config).retrieve_many(rewrite_result)
+                retriever = DenseRetriever(self.vectorstore, config=self.context.config)
+                results = retriever.retrieve_many(rewrite_result)
                 if step:
                     top_score = getattr(results[0], "final_score", None) if results else None
-                    step.tool_result_summary = {"count": len(results), "top_score": top_score}
+                    stats = retriever.last_query_stats
+                    step.tool_result_summary = {
+                        "count": len(results),
+                        "top_score": top_score,
+                        "rewrite_query_mode": stats.mode if stats else "unknown",
+                        "rewrite_query_count": stats.query_count if stats else len(rewrite_result.all_queries),
+                        "rewrite_query_max_workers": stats.max_workers if stats else 1,
+                        "rewrite_query_failed_count": len(stats.failed_queries) if stats else 0,
+                    }
             return FireAgentState(local_dense_results=results)
         except Exception as exc:  # noqa: BLE001 - 外部服务与模型错误统一写入状态。
             return FireAgentState(local_dense_results=[], errors=[f"dense_retrieve_node 失败：{exc}"])
@@ -258,9 +267,17 @@ class FireAgentGraphNodes:
                 rewrite_result = state.get("rewrite_result")
                 if rewrite_result is None:
                     rewrite_result = self.query_rewriter.rewrite(state_get_query(state))
-                results = SparseRetriever(self.vectorstore, config=self.context.config).retrieve_many(rewrite_result)
+                retriever = SparseRetriever(self.vectorstore, config=self.context.config)
+                results = retriever.retrieve_many(rewrite_result)
                 if step:
-                    step.tool_result_summary = {"count": len(results)}
+                    stats = retriever.last_query_stats
+                    step.tool_result_summary = {
+                        "count": len(results),
+                        "rewrite_query_mode": stats.mode if stats else "unknown",
+                        "rewrite_query_count": stats.query_count if stats else len(rewrite_result.all_queries),
+                        "rewrite_query_max_workers": stats.max_workers if stats else 1,
+                        "rewrite_query_failed_count": len(stats.failed_queries) if stats else 0,
+                    }
             return FireAgentState(local_sparse_results=results)
         except Exception as exc:  # noqa: BLE001
             return FireAgentState(local_sparse_results=[], errors=[f"sparse_retrieve_node 失败：{exc}"])

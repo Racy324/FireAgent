@@ -80,6 +80,8 @@ class RetrievalConfig(ConfigSection):
     """Hybrid retrieval, fusion, and reranking settings."""
 
     max_rewrite_queries: int = Field(default=4, gt=0)
+    parallel_rewrite_queries: bool = False
+    rewrite_query_max_workers: int = Field(default=4, gt=0)
     dense_top_k: int = Field(default=30, gt=0)
     sparse_top_k: int = Field(default=30, gt=0)
     fusion_top_k: int = Field(default=50, gt=0)
@@ -425,6 +427,8 @@ ENV_TO_CONFIG_PATH: dict[str, tuple[str, ...]] = {
     "CHUNK_OVERLAP": ("rag", "chunk_overlap"),
     "PARENT_CHUNK_SIZE": ("rag", "parent_chunk_size"),
     "MAX_REWRITE_QUERIES": ("retrieval", "max_rewrite_queries"),
+    "PARALLEL_REWRITE_QUERIES": ("retrieval", "parallel_rewrite_queries"),
+    "REWRITE_QUERY_MAX_WORKERS": ("retrieval", "rewrite_query_max_workers"),
     "DENSE_TOP_K": ("retrieval", "dense_top_k"),
     "SPARSE_TOP_K": ("retrieval", "sparse_top_k"),
     "FUSION_TOP_K": ("retrieval", "fusion_top_k"),

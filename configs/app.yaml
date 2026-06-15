@@ -21,6 +21,8 @@ ingestion:
 
 retrieval:
   max_rewrite_queries: 4
+  parallel_rewrite_queries: false
+  rewrite_query_max_workers: 4
   dense_top_k: 30
   sparse_top_k: 30
   fusion_top_k: 50

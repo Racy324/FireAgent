@@ -162,7 +162,14 @@ def run_streaming_workflow(
     with step_ctx as step:
         dense_results = dense_retriever.retrieve_many(rewrite_result)
         if step:
-            step.tool_result_summary = {"count": len(dense_results)}
+            stats = dense_retriever.last_query_stats
+            step.tool_result_summary = {
+                "count": len(dense_results),
+                "rewrite_query_mode": stats.mode if stats else "unknown",
+                "rewrite_query_count": stats.query_count if stats else len(rewrite_result.all_queries),
+                "rewrite_query_max_workers": stats.max_workers if stats else 1,
+                "rewrite_query_failed_count": len(stats.failed_queries) if stats else 0,
+            }
     state["local_dense_results"] = dense_results
 
     if recorder:
@@ -172,7 +179,14 @@ def run_streaming_workflow(
     with step_ctx as step:
         sparse_results = sparse_retriever.retrieve_many(rewrite_result)
         if step:
-            step.tool_result_summary = {"count": len(sparse_results)}
+            stats = sparse_retriever.last_query_stats
+            step.tool_result_summary = {
+                "count": len(sparse_results),
+                "rewrite_query_mode": stats.mode if stats else "unknown",
+                "rewrite_query_count": stats.query_count if stats else len(rewrite_result.all_queries),
+                "rewrite_query_max_workers": stats.max_workers if stats else 1,
+                "rewrite_query_failed_count": len(stats.failed_queries) if stats else 0,
+            }
     state["local_sparse_results"] = sparse_results
 
     yield _sse_event("stage", {
