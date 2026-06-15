@@ -26,6 +26,7 @@ from fireagent.retrieval import (
     LexicalReranker,
     LocalEvidenceSufficiencyChecker,
     QueryRewriter,
+    RegularRAGCandidateFilter,
     SparseRetriever,
     WeightedRRFFusion,
     create_reranker,
@@ -135,6 +136,7 @@ class FireAgentGraphNodes:
         self.fallback_policy = FallbackPolicy(config=self.context.config)
         self.context_builder = ContextBuilder(config=self.context.config)
         self.web_parser = WebSearchResultParser(config=self.context.config)
+        self.candidate_filter = RegularRAGCandidateFilter(config=self.context.config)
         self.prompt_loader = PromptTemplateLoader(config=self.context.config)
         self.intent_router = LLMIntentRouter(config=self.context.config)
 
@@ -274,11 +276,26 @@ class FireAgentGraphNodes:
         )
 
         with step_ctx as step:
+            query = get_main_query(state)
             dense_results = list(state.get("local_dense_results", []) or [])
             sparse_results = list(state.get("local_sparse_results", []) or [])
+
+            dense_results, dense_filter_stats = self.candidate_filter.filter_many(query, dense_results)
+            sparse_results, sparse_filter_stats = self.candidate_filter.filter_many(query, sparse_results)
+
             fused = self.fusion.fuse(dense_results, sparse_results)
             if step:
                 step.tool_result_summary = {
+                    "chunk_type_filter_mode": dense_filter_stats.mode,
+                    "filter_bypassed": dense_filter_stats.bypassed or sparse_filter_stats.bypassed,
+                    "dense_input_count": dense_filter_stats.input_count,
+                    "dense_output_count": dense_filter_stats.output_count,
+                    "dense_filtered_references": dense_filter_stats.filtered_references,
+                    "dense_filtered_short_figure_captions": dense_filter_stats.filtered_short_figure_captions,
+                    "sparse_input_count": sparse_filter_stats.input_count,
+                    "sparse_output_count": sparse_filter_stats.output_count,
+                    "sparse_filtered_references": sparse_filter_stats.filtered_references,
+                    "sparse_filtered_short_figure_captions": sparse_filter_stats.filtered_short_figure_captions,
                     "fused_count": len(fused),
                     "dense_weight": self.context.config.retrieval.dense_weight,
                     "sparse_weight": self.context.config.retrieval.sparse_weight,

@@ -34,6 +34,22 @@ retrieval:
   sufficiency_min_evidence: 2
   sufficiency_min_term_coverage: 0.30
   cross_doc_min_docs: 2
+  chunk_type_filter_mode: "off"
+  filter_references_for_regular_rag: false
+  min_figure_caption_chars_for_regular_rag: 50
+  chunk_type_filter_bypass_keywords:
+    - 参考文献
+    - 引用了哪些
+    - 引用文献
+    - references
+    - citation
+    - 图
+    - 图表
+    - 图注
+    - 表
+    - 表格
+    - figure
+    - table
 
 web:
   force_web_temporal: true

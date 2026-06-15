@@ -1,5 +1,6 @@
 """FireAgent 混合检索、融合、重排和上下文构建模块。"""
 
+from fireagent.retrieval.candidate_filter import CandidateFilterStats, RegularRAGCandidateFilter
 from fireagent.retrieval.context_builder import ContextBuilder, build_context
 from fireagent.retrieval.dense_retriever import DenseRetriever
 from fireagent.retrieval.fallback_policy import FallbackAction, FallbackDecision, FallbackPolicy, decide_fallback
@@ -31,6 +32,7 @@ from fireagent.retrieval.sufficiency_checker import (
 
 __all__ = [
     "BaseReranker",
+    "CandidateFilterStats",
     "ContextBuildResult",
     "ContextBuilder",
     "CrossEncoderReranker",
@@ -48,6 +50,7 @@ __all__ = [
     "QueryRewriteResult",
     "QueryRewriter",
     "RerankedRetrievalResult",
+    "RegularRAGCandidateFilter",
     "SparseRetriever",
     "StructuredCitation",
     "SufficiencyResult",

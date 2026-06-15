@@ -93,6 +93,25 @@ class RetrievalConfig(ConfigSection):
     sufficiency_min_evidence: int = Field(default=2, gt=0)
     sufficiency_min_term_coverage: float = Field(default=0.30, ge=0.0, le=1.0)
     cross_doc_min_docs: int = Field(default=2, gt=0)
+    chunk_type_filter_mode: Literal["off", "regular_rag"] = "off"
+    filter_references_for_regular_rag: bool = False
+    min_figure_caption_chars_for_regular_rag: int = Field(default=50, ge=0)
+    chunk_type_filter_bypass_keywords: list[str] = Field(
+        default_factory=lambda: [
+            "参考文献",
+            "引用了哪些",
+            "引用文献",
+            "references",
+            "citation",
+            "图",
+            "图表",
+            "图注",
+            "表",
+            "表格",
+            "figure",
+            "table",
+        ]
+    )
 
     @model_validator(mode="after")
     def validate_retrieval_limits(self) -> "RetrievalConfig":
@@ -418,6 +437,9 @@ ENV_TO_CONFIG_PATH: dict[str, tuple[str, ...]] = {
     "SUFFICIENCY_MIN_SCORE": ("retrieval", "sufficiency_min_score"),
     "SUFFICIENCY_MIN_EVIDENCE": ("retrieval", "sufficiency_min_evidence"),
     "SUFFICIENCY_MIN_TERM_COVERAGE": ("retrieval", "sufficiency_min_term_coverage"),
+    "CHUNK_TYPE_FILTER_MODE": ("retrieval", "chunk_type_filter_mode"),
+    "FILTER_REFERENCES_FOR_REGULAR_RAG": ("retrieval", "filter_references_for_regular_rag"),
+    "MIN_FIGURE_CAPTION_CHARS_FOR_REGULAR_RAG": ("retrieval", "min_figure_caption_chars_for_regular_rag"),
     "ENABLE_WEB_FALLBACK": ("rag", "enable_web_fallback"),
     "PDF_PARSER": ("ingestion", "pdf_parser"),
     "MINERU_OUTPUT_DIR": ("ingestion", "mineru_output_dir"),
