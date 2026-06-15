@@ -45,6 +45,7 @@ data/parsed/
 data/chunks/
 data/eval/runs/
 data/traces/
+data/eval/chunk_audit/
 *.db
 *.sqlite
 *.sqlite3
