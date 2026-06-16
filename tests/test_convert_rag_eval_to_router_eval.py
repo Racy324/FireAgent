@@ -45,6 +45,31 @@ def test_convert_rows_rejects_missing_question() -> None:
         convert_rows([{"case_id": "bad", "intent": "rag"}])
 
 
+def test_convert_rows_uses_router_aligned_metadata() -> None:
+    """Router-aligned RAG eval rows should keep router-specific labels."""
+    rows = [
+        {
+            "case_id": "case-router-aligned",
+            "question": "How should this be routed?",
+            "intent": "rag",
+            "metadata": {
+                "question_type": "single_doc_summary",
+                "router_expected_intent": "paper",
+                "router_expected_sub_intent": "paper_summary",
+                "router_expected_need_rag": True,
+                "router_expected_need_safety_notice": False,
+            },
+        }
+    ]
+
+    converted = convert_rows(rows)
+
+    assert converted[0]["expected_intent"] == "paper"
+    assert converted[0]["expected_sub_intent"] == "paper_summary"
+    assert converted[0]["expected_need_rag"] is True
+    assert converted[0]["expected_need_safety_notice"] is False
+
+
 def test_convert_cli_writes_jsonl_and_summary(tmp_path, capsys) -> None:
     """CLI 应写出 JSONL，并在 --json 时打印汇总。"""
     input_path = tmp_path / "seed60.jsonl"

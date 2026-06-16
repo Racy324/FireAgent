@@ -48,19 +48,32 @@ def convert_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not isinstance(metadata, dict):
             metadata = {}
 
-        converted.append(
-            {
-                "query": question,
-                "expected_intent": SEED60_INTENT_MAP.get(source_intent, "rag"),
-                "source_intent": source_intent,
-                "source_case_id": row.get("case_id", ""),
-                "source": "seed60_converted",
-                "question_type": metadata.get("question_type", ""),
-                "tags": row.get("tags", []),
-                "expected_behavior": row.get("expected_behavior", {}),
-                "notes": "converted from fireagent_benchmark_v1_seed60",
-            }
+        expected_intent = str(
+            metadata.get("router_expected_intent")
+            or SEED60_INTENT_MAP.get(source_intent, "rag")
         )
+        converted_row = {
+            "query": question,
+            "expected_intent": expected_intent,
+            "source_intent": source_intent,
+            "source_case_id": row.get("case_id", ""),
+            "source": metadata.get("router_eval_source", "seed60_converted"),
+            "question_type": metadata.get("question_type", ""),
+            "tags": row.get("tags", []),
+            "expected_behavior": row.get("expected_behavior", {}),
+            "notes": "converted from fireagent_benchmark_v1_seed60",
+        }
+        router_field_map = {
+            "router_expected_sub_intent": "expected_sub_intent",
+            "router_expected_need_rag": "expected_need_rag",
+            "router_expected_need_web_search": "expected_need_web_search",
+            "router_expected_need_memory": "expected_need_memory",
+            "router_expected_need_safety_notice": "expected_need_safety_notice",
+        }
+        for metadata_key, output_key in router_field_map.items():
+            if metadata_key in metadata:
+                converted_row[output_key] = metadata[metadata_key]
+        converted.append(converted_row)
     return converted
 
 
