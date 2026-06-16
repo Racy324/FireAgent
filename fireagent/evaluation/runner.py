@@ -149,6 +149,8 @@ class RAGEvaluationRunner:
                 candidate_citations = list(state.get("candidate_citations", []) or [])
                 used_citation_markers = list(state.get("used_citation_markers", []) or [])
                 invalid_citation_markers = list(state.get("invalid_citation_markers", []) or [])
+                route_decision = state.get("route_decision", {})
+                route_payload = route_decision if isinstance(route_decision, dict) else {}
                 predictions.append(
                     EvaluationPrediction(
                         case_id=case.case_id,
@@ -160,12 +162,22 @@ class RAGEvaluationRunner:
                         evidence_sufficient=bool(state.get("evidence_sufficient", False)),
                         errors=list(state.get("errors", []) or []),
                         latency_seconds=round(latency, 4),
+                        route_intent=str(route_payload.get("intent", "") or ""),
+                        route_sub_intent=str(route_payload.get("sub_intent", "") or ""),
+                        route_confidence=(
+                            float(route_payload["confidence"])
+                            if route_payload.get("confidence") is not None
+                            else None
+                        ),
+                        route_source=str(route_payload.get("source", "") or ""),
+                        route_reason=str(route_payload.get("reason", "") or ""),
                         metadata={
                             "hallucination_warnings": list(
                                 state.get("hallucination_warnings", []) or []
                             ),
                             "sufficiency": sufficiency_payload,
                             "fallback": fallback_payload,
+                            "route_decision": route_payload,
                             "web_triggered": fallback_action == "use_web",
                         },
                         fallback_action=fallback_action,

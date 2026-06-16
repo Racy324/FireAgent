@@ -41,6 +41,12 @@ class EvaluationPrediction(EvaluationModel):
     errors: list[str] = Field(default_factory=list)
     latency_seconds: Optional[float] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Intent router 决策字段
+    route_intent: str = ""
+    route_sub_intent: str = ""
+    route_confidence: Optional[float] = None
+    route_source: str = ""
+    route_reason: str = ""
     # Fallback 决策字段
     fallback_action: str = ""
     fallback_reason: str = ""
