@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import time
+from collections import defaultdict
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
@@ -17,9 +18,10 @@ from fireagent.evaluation.dataset import (
     write_manual_scores,
     write_predictions,
 )
+from fireagent.evaluation.evaluation_groups import get_evaluation_groups_from_case
 from fireagent.evaluation.manual import ManualRAGEvaluator
 from fireagent.evaluation.ragas_adapter import RagasEvaluationError, evaluate_with_ragas
-from fireagent.evaluation.schema import EvaluationCase, EvaluationPrediction, EvaluationSummary
+from fireagent.evaluation.schema import EvaluationCase, EvaluationPrediction, EvaluationSummary, ManualScore
 from fireagent.graph.workflow import build_fireagent_workflow, run_fireagent_workflow
 from fireagent.utils.config import FireAgentConfig, get_config
 from fireagent.vectorstore import FireAgentQdrantClient
@@ -77,6 +79,29 @@ class RAGEvaluationRunner:
         write_manual_review_csv(manual_review_path, cases, predictions, scores)
 
         average_scores = self.manual_evaluator.average_scores(scores)
+
+        # Phase 2: 按分组计算 group_summaries
+        score_by_id = {s.case_id: s for s in scores}
+        group_cases: dict[str, list[EvaluationCase]] = defaultdict(list)
+        group_scores: dict[str, list[ManualScore]] = defaultdict(list)
+        for case in cases:
+            groups = get_evaluation_groups_from_case(case)
+            for group in groups:
+                group_cases[group].append(case)
+                sc = score_by_id.get(case.case_id)
+                if sc is not None:
+                    group_scores[group].append(sc)
+
+        group_summaries: dict[str, dict[str, Any]] = {}
+        for group_name in sorted(group_cases.keys()):
+            g_scores = group_scores.get(group_name, [])
+            g_avg = self.manual_evaluator.average_scores(g_scores) if g_scores else {}
+            group_summaries[group_name] = {
+                "total_cases": len(group_cases[group_name]),
+                "scored_cases": len(g_scores),
+                "average_scores": g_avg,
+            }
+
         errors: list[str] = []
         ragas_report_path = ""
 
@@ -97,6 +122,7 @@ class RAGEvaluationRunner:
         summary = EvaluationSummary(
             total_cases=len(cases),
             average_scores=average_scores,
+            group_summaries=group_summaries,
             passed=passed,
             fail_under=fail_under,
             run_dir=str(run_dir),

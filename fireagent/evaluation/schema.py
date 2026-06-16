@@ -87,6 +87,7 @@ class EvaluationSummary(EvaluationModel):
 
     total_cases: int
     average_scores: dict[str, float] = Field(default_factory=dict)
+    group_summaries: dict[str, dict[str, Any]] = Field(default_factory=dict)
     passed: bool = True
     fail_under: Optional[float] = None
     run_dir: str = ""
