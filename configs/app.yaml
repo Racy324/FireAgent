@@ -124,7 +124,7 @@ tavily:
   chunks_per_source: 3
 
 evaluation:
-  dataset_path: data/eval/fireagent_eval_sample.jsonl
+  dataset_path: data/eval/fireagent_benchmark_v1_seed10.jsonl
   output_dir: data/eval/runs
   default_mode: manual
   fail_under:
