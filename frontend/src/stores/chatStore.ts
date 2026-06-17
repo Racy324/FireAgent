@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ChatMessage, MessageItem, SessionItem, SSEStageEvent } from '../api/types'
+import type { ChatMessage, CitationItem, MessageItem, SessionItem, SSEStageEvent } from '../api/types'
 import {
   deleteSession as deleteSessionApi,
   listSessionMessages,
@@ -84,6 +84,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   sendMessage: (query: string) => {
+    if (get().isStreaming) return
+
     const sessionId = get().currentSessionId
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
@@ -143,6 +145,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             last.session_id = data.session_id || s.currentSessionId
             last.isStreaming = false
             last.citations = data.citations
+            last.used_citations = data.used_citations || []
+            last.used_citation_markers = data.used_citation_markers || []
+            last.invalid_citation_markers = data.invalid_citation_markers || []
             last.intent = data.intent
             last.evidence_sufficient = data.evidence_sufficient
             last.safety_notice = data.safety_notice
@@ -184,6 +189,15 @@ function messageItemToChatMessage(message: MessageItem): ChatMessage {
     role: message.role === 'assistant' ? 'assistant' : 'user',
     content: message.content,
     citations: message.citations || [],
+    used_citations: Array.isArray(message.metadata?.used_citations)
+      ? (message.metadata.used_citations as CitationItem[])
+      : [],
+    used_citation_markers: Array.isArray(message.metadata?.used_citation_markers)
+      ? (message.metadata.used_citation_markers as string[])
+      : [],
+    invalid_citation_markers: Array.isArray(message.metadata?.invalid_citation_markers)
+      ? (message.metadata.invalid_citation_markers as string[])
+      : [],
     intent: message.intent,
     evidence_sufficient: Boolean(message.metadata?.evidence_sufficient),
   }

@@ -81,6 +81,8 @@ def chunk_to_payload(chunk: DocumentChunk) -> dict[str, Any]:
         "text": chunk.text,
         "chunk_type": chunk.chunk_type,
         "source_type": chunk.source_type,
+        "content_hash": chunk.metadata.get("content_hash", ""),
+        "status": chunk.metadata.get("status", "active"),
         "metadata": chunk.metadata,
     }
     return payload
@@ -160,6 +162,34 @@ def build_sparse_vector_params() -> Any:
         return models.SparseVectorParams()
     except TypeError:
         return models.SparseVectorParams()
+
+
+NOT_DELETED_STATUS = "active"
+
+
+def build_not_deleted_filter(existing_filter: Any = None) -> Any:
+    """构建排除已删除 chunks 的 Qdrant Filter。
+
+    将 status != "deleted" 条件注入到已有 filter 的 must_not 中。
+    对于无 status 字段的旧数据（status 缺失），Qdrant 的 must_not + MatchValue
+    不会排除它们（缺失字段 = 不匹配 = 不触发 must_not 排除），因此旧数据可正常召回。
+    """
+    try:
+        from qdrant_client import models
+    except ImportError as exc:
+        raise VectorStoreError("缺少 qdrant-client，请先安装依赖：pip install qdrant-client") from exc
+
+    not_deleted = models.FieldCondition(
+        key="status", match=models.MatchValue(value="deleted")
+    )
+    if existing_filter is None:
+        return models.Filter(must_not=[not_deleted])
+    existing_must_not = existing_filter.must_not or []
+    return models.Filter(
+        must=existing_filter.must,
+        should=existing_filter.should,
+        must_not=[*existing_must_not, not_deleted],
+    )
 
 
 def sparse_data_to_qdrant(vector: SparseVectorData) -> Any:

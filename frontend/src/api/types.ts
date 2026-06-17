@@ -7,6 +7,26 @@ export interface ChatRequest {
   include_debug?: boolean
 }
 
+export interface CitationItem {
+  citation_id: string
+  marker: string
+  source_type: string
+  title: string
+  authors: string[]
+  year: number | null
+  doc_id: string
+  chunk_id: string
+  parent_id: string
+  section_title: string
+  section_path: string[]
+  page_start: number | null
+  page_end: number | null
+  url: string
+  score: number
+  text_preview: string
+  metadata: Record<string, unknown>
+}
+
 export interface ChatResponse {
   answer: string
   session_id: string
@@ -14,6 +34,9 @@ export interface ChatResponse {
   intent: string
   evidence_sufficient: boolean
   citations: string[]
+  used_citations: CitationItem[]
+  used_citation_markers: string[]
+  invalid_citation_markers: string[]
   context?: string
   errors: string[]
   debug: Record<string, unknown>
@@ -74,6 +97,9 @@ export interface SSETokenEvent {
 
 export interface SSEDoneEvent {
   citations: string[]
+  used_citations?: CitationItem[]
+  used_citation_markers?: string[]
+  invalid_citation_markers?: string[]
   session_id?: string
   message_id?: string
   intent: string
@@ -115,10 +141,50 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   citations?: string[]
+  used_citations?: CitationItem[]
+  used_citation_markers?: string[]
+  invalid_citation_markers?: string[]
   intent?: string
   evidence_sufficient?: boolean
   safety_notice?: string
   elapsed?: number
   stages?: SSEStageEvent[]
   isStreaming?: boolean
+}
+
+// ── Ingest 类型 ──
+
+export interface UploadIngestResult {
+  status: 'indexed' | 'skipped' | 'error'
+  doc_id: string
+  filename: string
+  content_hash: string
+  chunks: number
+  message: string
+  old_chunks_deleted: number
+}
+
+// ── Detection 类型 ──
+
+export interface DetectionModelInfo {
+  model_id: string
+  display_name: string
+  type: string
+  ready: boolean
+  labels: string[]
+  default_conf_threshold: number
+}
+
+export interface VideoJobInfo {
+  job_id: string
+  status: 'queued' | 'running' | 'succeeded' | 'failed'
+  progress: number
+  input_filename: string
+  output_url: string | null
+  error: string | null
+  metrics: {
+    frames_total?: number
+    frames_done?: number
+    avg_latency_ms?: number
+  }
 }

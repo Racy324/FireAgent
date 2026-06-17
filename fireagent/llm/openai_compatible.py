@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Generator
 from typing import Any
 
@@ -135,6 +136,26 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
                 if isinstance(item, dict) and item.get("type") in {"text", "output_text"}
             )
         if not str(content).strip():
-            raise LLMClientError("LLM 响应内容为空。")
+            reasoning = message.get("reasoning", "")
+            if not isinstance(reasoning, str):
+                reasoning = str(reasoning or "")
+            if _contains_json_object(reasoning):
+                return reasoning.strip()
+            raise LLMClientError("LLM 响应内容为空，且 reasoning 中未发现 JSON。")
         return str(content).strip()
 
+
+def _contains_json_object(text: str) -> bool:
+    """判断文本中是否包含可解析的 JSON object。"""
+    for match in re.finditer(r"\{", text):
+        start = match.start()
+        end = text.rfind("}")
+        while end > start:
+            candidate = text[start : end + 1]
+            try:
+                value = json.loads(candidate)
+            except json.JSONDecodeError:
+                end = text.rfind("}", start, end)
+                continue
+            return isinstance(value, dict)
+    return False

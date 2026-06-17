@@ -1,5 +1,7 @@
 """FireAgent 混合检索、融合、重排和上下文构建模块。"""
 
+from fireagent.retrieval.candidate_filter import CandidateFilterStats, RegularRAGCandidateFilter
+from fireagent.retrieval.query_parallel import ParallelQueryStats, merge_query_results, retrieve_queries_parallel
 from fireagent.retrieval.context_builder import ContextBuilder, build_context
 from fireagent.retrieval.dense_retriever import DenseRetriever
 from fireagent.retrieval.fallback_policy import FallbackAction, FallbackDecision, FallbackPolicy, decide_fallback
@@ -20,6 +22,7 @@ from fireagent.retrieval.schema import (
     FusedRetrievalResult,
     QueryRewriteResult,
     RerankedRetrievalResult,
+    StructuredCitation,
     SufficiencyResult,
 )
 from fireagent.retrieval.sparse_retriever import SparseRetriever
@@ -30,6 +33,7 @@ from fireagent.retrieval.sufficiency_checker import (
 
 __all__ = [
     "BaseReranker",
+    "CandidateFilterStats",
     "ContextBuildResult",
     "ContextBuilder",
     "CrossEncoderReranker",
@@ -44,16 +48,21 @@ __all__ = [
     "LexicalReranker",
     "LocalEvidenceSufficiencyChecker",
     "OllamaEmbeddingReranker",
+    "ParallelQueryStats",
     "QueryRewriteResult",
     "QueryRewriter",
     "RerankedRetrievalResult",
+    "RegularRAGCandidateFilter",
     "SparseRetriever",
+    "StructuredCitation",
     "SufficiencyResult",
     "WeightedRRFFusion",
     "build_context",
     "check_local_evidence_sufficiency",
     "create_reranker",
     "decide_fallback",
+    "merge_query_results",
+    "retrieve_queries_parallel",
     "rewrite_query",
     "weighted_rrf",
 ]

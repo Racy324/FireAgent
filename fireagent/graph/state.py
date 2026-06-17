@@ -22,6 +22,7 @@ class FireAgentState(TypedDict, total=False):
     rewrite_result: Any
     intent: str
     intent_reason: str
+    route_decision: dict[str, Any]
     local_dense_results: list[Any]
     local_sparse_results: list[Any]
     fused_results: list[Any]
@@ -34,6 +35,12 @@ class FireAgentState(TypedDict, total=False):
     context_result: Any
     final_answer: str
     citations: list[str]
+    candidate_citations: list[Any]
+    used_citations: list[Any]
+    used_citation_markers: list[str]
+    invalid_citation_markers: list[str]
+    long_term_memories: str
+    long_term_memory_results: list[Any]
     safety_notice: str
     hallucination_warnings: list[str]
     route_next: str
@@ -44,6 +51,8 @@ def create_initial_state(
     user_query: str,
     session_id: str = "",
     conversation_context: str = "",
+    long_term_memories: str = "",
+    long_term_memory_results: list[Any] | None = None,
 ) -> FireAgentState:
     """根据用户问题创建初始状态。"""
     return FireAgentState(
@@ -52,6 +61,7 @@ def create_initial_state(
         conversation_context=conversation_context,
         rewritten_queries=[],
         intent="",
+        route_decision={},
         local_dense_results=[],
         local_sparse_results=[],
         fused_results=[],
@@ -61,6 +71,8 @@ def create_initial_state(
         final_context="",
         final_answer="",
         citations=[],
+        long_term_memories=long_term_memories,
+        long_term_memory_results=long_term_memory_results or [],
         safety_notice="",
         hallucination_warnings=[],
         errors=[],

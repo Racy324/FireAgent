@@ -9,13 +9,10 @@ import {
   Clock,
   ChevronDown,
   ChevronUp,
-  Plus,
-  MessageSquare,
-  X,
 } from 'lucide-react'
 import { useChatStore } from '../stores/chatStore'
 import MarkdownRenderer from '../components/MarkdownRenderer'
-import type { ChatMessage, SessionItem, SSEStageEvent } from '../api/types'
+import type { ChatMessage, CitationItem, SSEStageEvent } from '../api/types'
 import { formatElapsed } from '../utils/format'
 
 const STAGE_LABELS: Record<string, string> = {
@@ -30,17 +27,10 @@ const STAGE_LABELS: Record<string, string> = {
 }
 
 export default function Chat() {
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const {
-    sessions,
-    currentSessionId,
     messages,
     isStreaming,
-    isLoadingSessions,
-    loadSessions,
-    selectSession,
-    newSession,
-    deleteSession,
     sendMessage,
     clearMessages,
   } = useChatStore()
@@ -49,18 +39,15 @@ export default function Chat() {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const hasSentInitialQuery = useRef(false)
 
-  useEffect(() => {
-    void loadSessions()
-  }, [loadSessions])
-
   // 从 URL 参数自动发送问题
   useEffect(() => {
     const q = searchParams.get('q')
     if (q && !hasSentInitialQuery.current) {
       hasSentInitialQuery.current = true
       sendMessage(q)
+      setSearchParams({}, { replace: true })
     }
-  }, [searchParams, sendMessage])
+  }, [searchParams, sendMessage, setSearchParams])
 
   // 自动滚动到底部
   useEffect(() => {
@@ -91,16 +78,7 @@ export default function Chat() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] gap-4">
-      <SessionSidebar
-        sessions={sessions}
-        currentSessionId={currentSessionId}
-        isLoading={isLoadingSessions}
-        onNew={newSession}
-        onSelect={(sessionId) => void selectSession(sessionId)}
-        onDelete={(sessionId) => void deleteSession(sessionId)}
-      />
-
+    <div className="flex h-[calc(100vh-4rem)]">
       <div className="flex min-w-0 flex-1 flex-col">
         {/* 顶栏 */}
         <div className="flex items-center justify-between mb-4">
@@ -173,94 +151,6 @@ export default function Chat() {
       </div>
     </div>
   )
-}
-
-function SessionSidebar({
-  sessions,
-  currentSessionId,
-  isLoading,
-  onNew,
-  onSelect,
-  onDelete,
-}: {
-  sessions: SessionItem[]
-  currentSessionId?: string
-  isLoading: boolean
-  onNew: () => void
-  onSelect: (sessionId: string) => void
-  onDelete: (sessionId: string) => void
-}) {
-  return (
-    <aside className="glass-card hidden w-72 shrink-0 flex-col p-3 md:flex">
-      <div className="mb-3 flex items-center justify-between">
-        <div className="flex items-center gap-2 text-sm font-semibold text-gray-200">
-          <MessageSquare size={16} className="text-fire-400" />
-          会话历史
-        </div>
-        <button
-          onClick={onNew}
-          className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-white/5 hover:text-fire-300"
-          title="新建会话"
-        >
-          <Plus size={16} />
-        </button>
-      </div>
-
-      <div className="min-h-0 flex-1 space-y-1 overflow-y-auto">
-        {isLoading && <div className="px-2 py-3 text-xs text-gray-500">加载会话中...</div>}
-        {!isLoading && sessions.length === 0 && (
-          <div className="px-2 py-3 text-xs leading-relaxed text-gray-500">
-            暂无历史会话，发送第一条消息后会自动创建。
-          </div>
-        )}
-        {sessions.map((session) => {
-          const active = session.session_id === currentSessionId
-          return (
-            <div
-              key={session.session_id}
-              className={`group flex w-full items-start gap-2 rounded-lg transition-colors ${
-                active ? 'bg-fire-500/15 text-fire-100' : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
-              }`}
-            >
-              <button
-                onClick={() => onSelect(session.session_id)}
-                className="flex min-w-0 flex-1 items-start gap-2 px-2 py-2 text-left"
-              >
-                <MessageSquare size={14} className="mt-0.5 shrink-0" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-xs font-medium">{session.title || '新会话'}</span>
-                  <span className="mt-0.5 block text-[10px] text-gray-600">
-                    {formatSessionTime(session.updated_at)}
-                  </span>
-                </span>
-              </button>
-              <button
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onDelete(session.session_id)
-                }}
-                className="mr-1 mt-1.5 rounded p-1 text-gray-600 opacity-0 transition-opacity hover:bg-red-500/10 hover:text-red-300 group-hover:opacity-100"
-                title="删除会话"
-              >
-                <X size={12} />
-              </button>
-            </div>
-          )
-        })}
-      </div>
-    </aside>
-  )
-}
-
-function formatSessionTime(value: string) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
 }
 
 /** AI 回答气泡 */
@@ -342,36 +232,46 @@ function AssistantBubble({ message }: { message: ChatMessage }) {
       )}
 
       {/* 引用来源 */}
-      {message.citations && message.citations.length > 0 && (
-        <div>
-          <button
-            onClick={() => setShowCitations(!showCitations)}
-            className="flex items-center gap-1.5 text-[10px] text-gray-500 hover:text-gray-400 transition-colors"
-          >
-            <BookOpen size={12} />
-            {showCitations ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-            引用来源 ({message.citations.length})
-          </button>
-          <AnimatePresence>
-            {showCitations && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                className="overflow-hidden"
-              >
-                <div className="mt-2 space-y-1">
-                  {message.citations.map((cite, i) => (
-                    <div key={i} className="text-[11px] text-gray-400 pl-3 border-l border-fire-500/20 py-0.5">
-                      {cite}
-                    </div>
-                  ))}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-      )}
+      {(() => {
+        const hasUsed = message.used_citations && message.used_citations.length > 0
+        const hasLegacy = message.citations && message.citations.length > 0
+        if (!hasUsed && !hasLegacy) return null
+        const citeCount = hasUsed ? message.used_citations!.length : message.citations!.length
+        return (
+          <div>
+            <button
+              onClick={() => setShowCitations(!showCitations)}
+              className="flex items-center gap-1.5 text-[10px] text-gray-500 hover:text-gray-400 transition-colors"
+            >
+              <BookOpen size={12} />
+              {showCitations ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              引用来源 ({citeCount})
+            </button>
+            <AnimatePresence>
+              {showCitations && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="overflow-hidden"
+                >
+                  <div className="mt-2 space-y-1.5">
+                    {hasUsed
+                      ? message.used_citations!.map((cite) => (
+                          <CitationCard key={cite.citation_id} citation={cite} />
+                        ))
+                      : message.citations!.map((cite, i) => (
+                          <div key={i} className="text-[11px] text-gray-400 pl-3 border-l border-fire-500/20 py-0.5">
+                            {cite}
+                          </div>
+                        ))}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )
+      })()}
     </div>
   )
 }
@@ -391,5 +291,42 @@ function StageTag({ stage }: { stage: SSEStageEvent }) {
     <span className="text-[10px] px-2 py-0.5 rounded-full bg-bg-tertiary text-gray-400 border border-white/5">
       {label}{detail ? ` · ${detail}` : ''}
     </span>
+  )
+}
+
+/** 结构化引用卡片 */
+function CitationCard({ citation }: { citation: CitationItem }) {
+  const isWeb = citation.source_type.startsWith('web')
+  const pageText = citation.page_start
+    ? citation.page_end && citation.page_end !== citation.page_start
+      ? `第${citation.page_start}-${citation.page_end}页`
+      : `第${citation.page_start}页`
+    : ''
+
+  return (
+    <div className="text-[11px] pl-3 border-l border-fire-500/20 py-1 space-y-0.5">
+      <div className="flex items-center gap-1.5">
+        <span className="font-mono text-fire-400 font-semibold">{citation.marker}</span>
+        <span className="text-gray-300">{citation.title || '题名未知'}</span>
+      </div>
+      {!isWeb && (
+        <div className="text-gray-500">
+          {citation.authors.length > 0 ? citation.authors.join('、') : '作者未知'}
+          {citation.year ? `，${citation.year}` : ''}
+          {citation.section_title ? `，${citation.section_title}` : ''}
+          {pageText ? `，${pageText}` : ''}
+        </div>
+      )}
+      {isWeb && citation.url && (
+        <a
+          href={citation.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-fire-400 hover:text-fire-300 underline underline-offset-2 truncate block max-w-full"
+        >
+          {citation.url}
+        </a>
+      )}
+    </div>
   )
 }

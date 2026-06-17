@@ -174,6 +174,38 @@ def test_evaluation_runner_records_sufficiency_and_fallback_metadata(monkeypatch
     assert prediction.metadata["sufficiency"]["reason"] == "top_score_below_threshold"
 
 
+def test_evaluation_runner_records_route_metadata(monkeypatch) -> None:
+    """生成端到端预测时应记录 intent router 的结构化决策。"""
+
+    class FakeWorkflow:
+        def invoke(self, _state):
+            return {
+                "final_answer": "测试答案",
+                "final_context": "测试上下文",
+                "citations": [],
+                "intent": "rag",
+                "route_decision": {
+                    "intent": "rag",
+                    "sub_intent": "knowledge_qa",
+                    "confidence": 0.92,
+                    "source": "llm",
+                    "reason": "语义路由",
+                },
+            }
+
+    monkeypatch.setattr(runner_module, "build_fireagent_workflow", lambda **_kwargs: FakeWorkflow())
+
+    case = EvaluationCase(case_id="case-route", question="火灾检测有哪些方法？")
+    prediction = RAGEvaluationRunner().generate_predictions([case], show_progress=False)[0]
+
+    assert prediction.route_intent == "rag"
+    assert prediction.route_sub_intent == "knowledge_qa"
+    assert prediction.route_confidence == 0.92
+    assert prediction.route_source == "llm"
+    assert prediction.route_reason == "语义路由"
+    assert prediction.metadata["route_decision"]["confidence"] == 0.92
+
+
 def test_manual_evaluator_scores_fallback_decision() -> None:
     """人工评估应标记 fallback 动作是否符合期望。"""
     case = EvaluationCase(

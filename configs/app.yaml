@@ -21,6 +21,8 @@ ingestion:
 
 retrieval:
   max_rewrite_queries: 4
+  parallel_rewrite_queries: false
+  rewrite_query_max_workers: 4
   dense_top_k: 30
   sparse_top_k: 30
   fusion_top_k: 50
@@ -34,6 +36,22 @@ retrieval:
   sufficiency_min_evidence: 2
   sufficiency_min_term_coverage: 0.30
   cross_doc_min_docs: 2
+  chunk_type_filter_mode: "off"
+  filter_references_for_regular_rag: false
+  min_figure_caption_chars_for_regular_rag: 50
+  chunk_type_filter_bypass_keywords:
+    - 参考文献
+    - 引用了哪些
+    - 引用文献
+    - references
+    - citation
+    - 图
+    - 图表
+    - 图注
+    - 表
+    - 表格
+    - figure
+    - table
 
 web:
   force_web_temporal: true
@@ -115,3 +133,50 @@ memory:
   enabled: true
   database_path: data/app/fireagent.db
   recent_message_limit: 8
+  short_term:
+    enabled: true
+    recent_message_limit: 8
+    max_chars: 3500
+    rolling_summary_max_chars: 1500
+    summarize_after_messages: 20
+    intermediate_result_limit: 8
+    pinned_message_limit: 8
+  long_term:
+    enabled: true
+    collection: fireagent_memories
+    top_k: 5
+    max_prompt_chars: 1200
+    min_relevance_score: 0.35
+    write_enabled: true
+    importance_threshold: 0.72
+    confidence_threshold: 0.65
+    max_candidates_per_turn: 2
+    default_half_life_days: 180
+    semantic_half_life_days: 365
+    episodic_half_life_days: 90
+    procedural_half_life_days: 365
+    dedup_similarity_threshold: 0.88
+
+observability:
+  enabled: true
+  trace_dir: data/traces
+  save_trace: true
+  save_index: true
+  include_debug_in_response: true
+  max_summary_chars: 500
+
+detection:
+  enabled: true
+  device: auto
+  default_model: yolo_fire_smoke
+  job_output_dir: data/detection/jobs
+  max_upload_mb: 500
+  models:
+    yolo_fire_smoke:
+      type: yolo
+      display_name: YOLO 火灾烟雾检测
+      weights: detect_models/exp110/weights/best.pt
+      labels: ["fire", "smoke", "others"]
+      image_size: 640
+      conf_threshold: 0.35
+      iou_threshold: 0.7

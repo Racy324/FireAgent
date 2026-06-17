@@ -1,12 +1,15 @@
 import { API_BASE_URL } from './client'
 import api from './client'
-import type { SessionItem, SessionMessagesResponse, SessionsListResponse, SSEStageEvent } from './types'
+import type { CitationItem, SessionItem, SessionMessagesResponse, SessionsListResponse, SSEStageEvent } from './types'
 
 export interface StreamCallbacks {
   onStage?: (event: SSEStageEvent) => void
   onToken?: (token: string) => void
   onDone?: (data: {
     citations: string[]
+    used_citations?: CitationItem[]
+    used_citation_markers?: string[]
+    invalid_citation_markers?: string[]
     session_id?: string
     message_id?: string
     intent: string
@@ -44,6 +47,7 @@ export function sendStreamChat(
 
       const decoder = new TextDecoder()
       let buffer = ''
+      let currentEvent = ''
 
       while (true) {
         const { done, value } = await reader.read()
@@ -53,9 +57,10 @@ export function sendStreamChat(
         const lines = buffer.split('\n')
         buffer = lines.pop() || ''
 
-        let currentEvent = ''
         for (const line of lines) {
-          if (line.startsWith('event: ')) {
+          if (line.trim() === '') {
+            currentEvent = ''
+          } else if (line.startsWith('event: ')) {
             currentEvent = line.slice(7).trim()
           } else if (line.startsWith('data: ')) {
             const dataStr = line.slice(6)
@@ -93,7 +98,7 @@ export function sendStreamChat(
 
 export async function listSessions(): Promise<SessionItem[]> {
   const response = await api.get<SessionsListResponse>('/sessions')
-  return response.data.sessions
+  return Array.isArray(response.data?.sessions) ? response.data.sessions : []
 }
 
 export async function createSession(title = ''): Promise<SessionItem> {

@@ -41,9 +41,13 @@ log.txt
 data/logs/
 data/app/
 data/raw_pdfs/
+data/uploaded_pdfs/
 data/parsed/
 data/chunks/
 data/eval/runs/
+data/traces/
+data/detection/jobs/
+data/eval/chunk_audit/
 *.db
 *.sqlite
 *.sqlite3
@@ -52,6 +56,9 @@ data/eval/runs/
 # 模型文件（体积大，不上传）
 # ──────────────────────────────────────
 models/
+!fireagent/detection/models/
+codes/
+detect_models/
 
 # ──────────────────────────────────────
 # 前端

@@ -80,6 +80,8 @@ class RetrievalConfig(ConfigSection):
     """Hybrid retrieval, fusion, and reranking settings."""
 
     max_rewrite_queries: int = Field(default=4, gt=0)
+    parallel_rewrite_queries: bool = False
+    rewrite_query_max_workers: int = Field(default=4, gt=0)
     dense_top_k: int = Field(default=30, gt=0)
     sparse_top_k: int = Field(default=30, gt=0)
     fusion_top_k: int = Field(default=50, gt=0)
@@ -93,6 +95,25 @@ class RetrievalConfig(ConfigSection):
     sufficiency_min_evidence: int = Field(default=2, gt=0)
     sufficiency_min_term_coverage: float = Field(default=0.30, ge=0.0, le=1.0)
     cross_doc_min_docs: int = Field(default=2, gt=0)
+    chunk_type_filter_mode: Literal["off", "regular_rag"] = "off"
+    filter_references_for_regular_rag: bool = False
+    min_figure_caption_chars_for_regular_rag: int = Field(default=50, ge=0)
+    chunk_type_filter_bypass_keywords: list[str] = Field(
+        default_factory=lambda: [
+            "参考文献",
+            "引用了哪些",
+            "引用文献",
+            "references",
+            "citation",
+            "图",
+            "图表",
+            "图注",
+            "表",
+            "表格",
+            "figure",
+            "table",
+        ]
+    )
 
     @model_validator(mode="after")
     def validate_retrieval_limits(self) -> "RetrievalConfig":
@@ -141,6 +162,23 @@ class LLMConfig(ConfigSection):
     enabled: bool = True
 
 
+class RouterConfig(ConfigSection):
+    """意图路由小模型配置。"""
+
+    enabled: bool = True
+    mode: Literal["hybrid", "shadow", "rules"] = "hybrid"
+    provider: str = "openai_compatible"
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+    temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=200, gt=0)
+    timeout: float = Field(default=10.0, gt=0)
+    confidence_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
+    low_confidence_threshold: float = Field(default=0.55, ge=0.0, le=1.0)
+    fallback_to_rules: bool = True
+
+
 class HNSWConfig(ConfigSection):
     """Qdrant HNSW index settings."""
 
@@ -185,12 +223,45 @@ class EvaluationConfig(ConfigSection):
     fail_under: Optional[float] = None
 
 
+class ShortTermMemoryConfig(ConfigSection):
+    """短期上下文管理配置。"""
+
+    enabled: bool = True
+    recent_message_limit: int = Field(default=8, gt=0)
+    max_chars: int = Field(default=3500, gt=0)
+    rolling_summary_max_chars: int = Field(default=1500, gt=0)
+    summarize_after_messages: int = Field(default=20, gt=0)
+    intermediate_result_limit: int = Field(default=8, gt=0)
+    pinned_message_limit: int = Field(default=8, gt=0)
+
+
+class LongTermMemoryConfig(ConfigSection):
+    """长期记忆配置。"""
+
+    enabled: bool = True
+    collection: str = "fireagent_memories"
+    top_k: int = Field(default=5, gt=0)
+    max_prompt_chars: int = Field(default=1200, gt=0)
+    min_relevance_score: float = Field(default=0.35, ge=0.0, le=1.0)
+    write_enabled: bool = True
+    importance_threshold: float = Field(default=0.72, ge=0.0, le=1.0)
+    confidence_threshold: float = Field(default=0.65, ge=0.0, le=1.0)
+    max_candidates_per_turn: int = Field(default=2, gt=0)
+    default_half_life_days: float = Field(default=180.0, gt=0)
+    semantic_half_life_days: float = Field(default=365.0, gt=0)
+    episodic_half_life_days: float = Field(default=90.0, gt=0)
+    procedural_half_life_days: float = Field(default=365.0, gt=0)
+    dedup_similarity_threshold: float = Field(default=0.88, ge=0.0, le=1.0)
+
+
 class MemoryConfig(ConfigSection):
     """会话历史和记忆系统配置。"""
 
     enabled: bool = True
     database_path: str = "data/app/fireagent.db"
     recent_message_limit: int = Field(default=8, gt=0)
+    short_term: ShortTermMemoryConfig = Field(default_factory=ShortTermMemoryConfig)
+    long_term: LongTermMemoryConfig = Field(default_factory=LongTermMemoryConfig)
 
 
 class WebFallbackConfig(ConfigSection):
@@ -272,6 +343,40 @@ class PromptConfig(ConfigSection):
     hallucination_check: str = "fireagent/prompts/hallucination_check.md"
 
 
+class DetectionModelConfig(ConfigSection):
+    """单个检测模型配置。"""
+
+    type: str = "yolo"
+    display_name: str = ""
+    weights: str = ""
+    labels: list[str] = Field(default_factory=lambda: ["fire", "smoke"])
+    image_size: int = Field(default=640, gt=0)
+    conf_threshold: float = Field(default=0.35, ge=0.0, le=1.0)
+    iou_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+
+
+class DetectionConfig(ConfigSection):
+    """视觉检测模块配置。"""
+
+    enabled: bool = True
+    device: str = "auto"
+    default_model: str = "yolo_fire_smoke"
+    job_output_dir: str = "data/detection/jobs"
+    max_upload_mb: int = Field(default=500, gt=0)
+    models: dict[str, DetectionModelConfig] = Field(default_factory=dict)
+
+
+class ObservabilityConfig(ConfigSection):
+    """Observability / Trace 配置。"""
+
+    enabled: bool = True
+    trace_dir: str = "data/traces"
+    save_trace: bool = True
+    save_index: bool = True
+    include_debug_in_response: bool = True
+    max_summary_chars: int = Field(default=500, gt=0)
+
+
 class FireAgentConfig(ConfigSection):
     """Top-level FireAgent configuration."""
 
@@ -282,12 +387,15 @@ class FireAgentConfig(ConfigSection):
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     reranker: RerankerConfig = Field(default_factory=RerankerConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    router: RouterConfig = Field(default_factory=RouterConfig)
     qdrant: QdrantConfig = Field(default_factory=QdrantConfig)
     tavily: TavilyConfig = Field(default_factory=TavilyConfig)
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     web: WebFallbackConfig = Field(default_factory=WebFallbackConfig)
     prompts: PromptConfig = Field(default_factory=PromptConfig)
+    observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
+    detection: DetectionConfig = Field(default_factory=DetectionConfig)
 
 
 ENV_TO_CONFIG_PATH: dict[str, tuple[str, ...]] = {
@@ -315,6 +423,18 @@ ENV_TO_CONFIG_PATH: dict[str, tuple[str, ...]] = {
     "OPENAI_COMPATIBLE_TIMEOUT": ("llm", "timeout"),
     "ENABLE_LLM_ANSWER": ("llm", "enabled"),
     "LLM_PROVIDER": ("llm", "provider"),
+    "ROUTER_ENABLED": ("router", "enabled"),
+    "ROUTER_MODE": ("router", "mode"),
+    "ROUTER_PROVIDER": ("router", "provider"),
+    "ROUTER_BASE_URL": ("router", "base_url"),
+    "ROUTER_API_KEY": ("router", "api_key"),
+    "ROUTER_MODEL": ("router", "model"),
+    "ROUTER_TEMPERATURE": ("router", "temperature"),
+    "ROUTER_MAX_TOKENS": ("router", "max_tokens"),
+    "ROUTER_TIMEOUT": ("router", "timeout"),
+    "ROUTER_CONFIDENCE_THRESHOLD": ("router", "confidence_threshold"),
+    "ROUTER_LOW_CONFIDENCE_THRESHOLD": ("router", "low_confidence_threshold"),
+    "ROUTER_FALLBACK_TO_RULES": ("router", "fallback_to_rules"),
     "EMBEDDING_PROVIDER": ("embedding", "provider"),
     "EMBEDDING_MODEL_NAME": ("embedding", "model_name"),
     "EMBEDDING_BASE_URL": ("embedding", "base_url"),
@@ -331,6 +451,8 @@ ENV_TO_CONFIG_PATH: dict[str, tuple[str, ...]] = {
     "CHUNK_OVERLAP": ("rag", "chunk_overlap"),
     "PARENT_CHUNK_SIZE": ("rag", "parent_chunk_size"),
     "MAX_REWRITE_QUERIES": ("retrieval", "max_rewrite_queries"),
+    "PARALLEL_REWRITE_QUERIES": ("retrieval", "parallel_rewrite_queries"),
+    "REWRITE_QUERY_MAX_WORKERS": ("retrieval", "rewrite_query_max_workers"),
     "DENSE_TOP_K": ("retrieval", "dense_top_k"),
     "SPARSE_TOP_K": ("retrieval", "sparse_top_k"),
     "FUSION_TOP_K": ("retrieval", "fusion_top_k"),
@@ -343,6 +465,9 @@ ENV_TO_CONFIG_PATH: dict[str, tuple[str, ...]] = {
     "SUFFICIENCY_MIN_SCORE": ("retrieval", "sufficiency_min_score"),
     "SUFFICIENCY_MIN_EVIDENCE": ("retrieval", "sufficiency_min_evidence"),
     "SUFFICIENCY_MIN_TERM_COVERAGE": ("retrieval", "sufficiency_min_term_coverage"),
+    "CHUNK_TYPE_FILTER_MODE": ("retrieval", "chunk_type_filter_mode"),
+    "FILTER_REFERENCES_FOR_REGULAR_RAG": ("retrieval", "filter_references_for_regular_rag"),
+    "MIN_FIGURE_CAPTION_CHARS_FOR_REGULAR_RAG": ("retrieval", "min_figure_caption_chars_for_regular_rag"),
     "ENABLE_WEB_FALLBACK": ("rag", "enable_web_fallback"),
     "PDF_PARSER": ("ingestion", "pdf_parser"),
     "MINERU_OUTPUT_DIR": ("ingestion", "mineru_output_dir"),
@@ -366,6 +491,11 @@ ENV_TO_CONFIG_PATH: dict[str, tuple[str, ...]] = {
     "MEMORY_RECENT_MESSAGE_LIMIT": ("memory", "recent_message_limit"),
     "APP_ENVIRONMENT": ("app", "environment"),
     "LOG_LEVEL": ("app", "log_level"),
+    "OBSERVABILITY_ENABLED": ("observability", "enabled"),
+    "OBSERVABILITY_TRACE_DIR": ("observability", "trace_dir"),
+    "DETECTION_ENABLED": ("detection", "enabled"),
+    "DETECTION_DEVICE": ("detection", "device"),
+    "DETECTION_DEFAULT_MODEL": ("detection", "default_model"),
 }
 
 

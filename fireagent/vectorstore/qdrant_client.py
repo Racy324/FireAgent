@@ -21,6 +21,7 @@ from fireagent.vectorstore.schema import (
     VectorSearchResult,
     VectorStoreError,
     build_dense_vector_params,
+    build_not_deleted_filter,
     build_sparse_vector_params,
     chunk_to_payload,
     payload_to_text,
@@ -349,26 +350,28 @@ class FireAgentQdrantClient:
             logger.exception("Failed to write embedding diagnostic log: %s", EMBEDDING_DIAGNOSTIC_LOG)
 
     def dense_search(self, query: str, top_k: int = 10, query_filter: Any = None) -> list[VectorSearchResult]:
-        """执行 dense named vector 检索。"""
+        """执行 dense named vector 检索。自动排除已删除的 chunks。"""
         query_vector = self.dense_embedder.embed_query(query)
+        effective_filter = build_not_deleted_filter(query_filter)
         raw_results = self._query_points(
             query=query_vector,
             using=self.schema.dense_vector_name,
             top_k=top_k,
-            query_filter=query_filter,
+            query_filter=effective_filter,
         )
         return self._to_results(raw_results, source="qdrant_dense", vector_name=self.schema.dense_vector_name)
 
     def sparse_search(self, query: str, top_k: int = 10, query_filter: Any = None) -> list[VectorSearchResult]:
-        """执行 BM25 sparse 检索；Qdrant 不可用时退回本地 BM25。"""
+        """执行 BM25 sparse 检索；Qdrant 不可用时退回本地 BM25。自动排除已删除的 chunks。"""
         sparse_query = self.sparse_encoder.encode_query(query)
+        effective_filter = build_not_deleted_filter(query_filter)
         if not sparse_query.is_empty():
             try:
                 raw_results = self._query_points(
                     query=sparse_data_to_qdrant(sparse_query),
                     using=self.schema.sparse_vector_name,
                     top_k=top_k,
-                    query_filter=query_filter,
+                    query_filter=effective_filter,
                 )
                 return self._to_results(
                     raw_results,
@@ -394,6 +397,70 @@ class FireAgentQdrantClient:
         dense_results = self.dense_search(query, top_k=dense_top_k, query_filter=query_filter)
         sparse_results = self.sparse_search(query, top_k=sparse_top_k, query_filter=query_filter)
         return HybridSearchResultSet(dense_results=dense_results, sparse_results=sparse_results)
+
+    # ── 增量索引支持 ──
+
+    def soft_delete_by_doc_id(self, doc_id: str) -> int:
+        """将指定 doc_id 的所有 chunks 标记为 status=deleted。
+
+        返回受影响的 point 数量。
+        """
+        from qdrant_client import models as qmodels
+
+        points, _ = self.client.scroll(
+            collection_name=self.collection_name,
+            scroll_filter=qmodels.Filter(
+                must=[qmodels.FieldCondition(key="doc_id", match=qmodels.MatchValue(value=doc_id))],
+            ),
+            limit=10000,
+            with_payload=False,
+            with_vectors=False,
+        )
+        if not points:
+            return 0
+
+        self.client.set_payload(
+            collection_name=self.collection_name,
+            payload={"status": "deleted"},
+            points=[p.id for p in points],
+        )
+        return len(points)
+
+    def count_by_doc_id(self, doc_id: str) -> int:
+        """统计指定 doc_id 下 active 状态的 chunks 数量。"""
+        from qdrant_client import models as qmodels
+
+        result = self.client.count(
+            collection_name=self.collection_name,
+            count_filter=qmodels.Filter(
+                must=[
+                    qmodels.FieldCondition(key="doc_id", match=qmodels.MatchValue(value=doc_id)),
+                    qmodels.FieldCondition(key="status", match=qmodels.MatchValue(value="active")),
+                ],
+            ),
+            exact=True,
+        )
+        return result.count
+
+    def get_content_hash_by_doc_id(self, doc_id: str) -> str | None:
+        """获取指定 doc_id 的 content_hash（取第一个 active chunk 的值）。"""
+        from qdrant_client import models as qmodels
+
+        points, _ = self.client.scroll(
+            collection_name=self.collection_name,
+            scroll_filter=qmodels.Filter(
+                must=[
+                    qmodels.FieldCondition(key="doc_id", match=qmodels.MatchValue(value=doc_id)),
+                    qmodels.FieldCondition(key="status", match=qmodels.MatchValue(value="active")),
+                ],
+            ),
+            limit=1,
+            with_payload=["content_hash"],
+            with_vectors=False,
+        )
+        if not points:
+            return None
+        return points[0].payload.get("content_hash") if points[0].payload else None
 
     def _create_client(self) -> Any:
         """根据配置创建 qdrant-client。"""

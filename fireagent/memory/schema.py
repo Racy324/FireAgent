@@ -38,3 +38,19 @@ class MessageRecord(MemoryModel):
     citations: list[str] = Field(default_factory=list)
     debug: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionStateRecord(MemoryModel):
+    """会话短期状态记录，用于结构化短期上下文管理。"""
+
+    session_id: str
+    current_goal: str = ""
+    current_step: str = ""
+    rolling_summary: str = ""
+    completed_items: list[str] = Field(default_factory=list)
+    pending_items: list[str] = Field(default_factory=list)
+    constraints: list[str] = Field(default_factory=list)
+    intermediate_results: list[dict[str, Any]] = Field(default_factory=list)
+    pinned_message_ids: list[str] = Field(default_factory=list)
+    updated_at: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)

@@ -41,9 +41,20 @@ class EvaluationPrediction(EvaluationModel):
     errors: list[str] = Field(default_factory=list)
     latency_seconds: Optional[float] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Intent router 决策字段
+    route_intent: str = ""
+    route_sub_intent: str = ""
+    route_confidence: Optional[float] = None
+    route_source: str = ""
+    route_reason: str = ""
     # Fallback 决策字段
     fallback_action: str = ""
     fallback_reason: str = ""
+    # Used citation 字段
+    used_citation_markers: list[str] = Field(default_factory=list)
+    invalid_citation_markers: list[str] = Field(default_factory=list)
+    candidate_citation_count: int = 0
+    used_citation_count: int = 0
 
 
 class ManualScore(EvaluationModel):
@@ -76,6 +87,7 @@ class EvaluationSummary(EvaluationModel):
 
     total_cases: int
     average_scores: dict[str, float] = Field(default_factory=dict)
+    group_summaries: dict[str, dict[str, Any]] = Field(default_factory=dict)
     passed: bool = True
     fail_under: Optional[float] = None
     run_dir: str = ""

@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from collections import OrderedDict
 
+from fireagent.retrieval.query_parallel import (
+    ParallelQueryStats,
+    merge_query_results,
+    retrieve_queries_parallel,
+)
 from fireagent.retrieval.schema import QueryRewriteResult
 from fireagent.utils.config import FireAgentConfig, get_config
 from fireagent.vectorstore.qdrant_client import FireAgentQdrantClient
@@ -12,6 +17,8 @@ from fireagent.vectorstore.schema import VectorSearchResult
 
 class SparseRetriever:
     """调用向量库 sparse_search 的检索器。"""
+
+    last_query_stats: ParallelQueryStats | None = None
 
     def __init__(
         self,
@@ -34,18 +41,28 @@ class SparseRetriever:
     ) -> list[VectorSearchResult]:
         """对原始查询、主查询和扩展查询执行 sparse 检索，并按 chunk_id 去重。"""
         per_query_k = top_k or self.top_k
-        best_by_chunk: OrderedDict[str, VectorSearchResult] = OrderedDict()
+        queries = list(rewrite_result.all_queries)
 
-        for query in rewrite_result.all_queries:
-            for result in self.retrieve(query, top_k=per_query_k):
-                result.payload.setdefault("matched_queries", [])
-                result.payload["matched_queries"].append(query)
-                current = best_by_chunk.get(result.chunk_id)
-                if current is None or result.score > current.score:
-                    best_by_chunk[result.chunk_id] = result
+        if self.config.retrieval.parallel_rewrite_queries and len(queries) > 1:
+            results, stats = retrieve_queries_parallel(
+                queries=queries,
+                retrieve_one=lambda query: self.retrieve(query, top_k=per_query_k),
+                limit=self.top_k,
+                max_workers=self.config.retrieval.rewrite_query_max_workers,
+            )
+            self.last_query_stats = stats
+            if len(stats.failed_queries) == len(queries):
+                raise RuntimeError("all sparse rewrite queries failed")
+            return results
 
-        results = sorted(best_by_chunk.values(), key=lambda item: item.score, reverse=True)
-        for rank, result in enumerate(results[: self.top_k], start=1):
-            result.rank = rank
-        return results[: self.top_k]
+        query_results = [
+            (query, self.retrieve(query, top_k=per_query_k))
+            for query in queries
+        ]
+        self.last_query_stats = ParallelQueryStats(
+            mode="serial",
+            query_count=len(queries),
+            max_workers=1,
+        )
+        return merge_query_results(query_results, limit=self.top_k)
 
