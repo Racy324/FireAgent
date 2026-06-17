@@ -231,7 +231,7 @@ def test_manual_evaluator_scores_fallback_decision() -> None:
 
 def test_load_sample_eval_dataset() -> None:
     """示例评测集应保持 JSONL 可解析。"""
-    cases = load_evaluation_cases("data/eval/fireagent_eval_sample.jsonl")
+    cases = load_evaluation_cases("data/eval/fireagent_benchmark_v1_seed10.jsonl")
 
     assert len(cases) >= 3
     assert all(case.case_id and case.question for case in cases)

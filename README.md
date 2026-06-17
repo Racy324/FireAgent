@@ -235,7 +235,7 @@ python scripts/query_cli.py
 python scripts/rebuild_index.py --input-dir data/raw_pdfs
 
 # RAG 评测
-python scripts/evaluate_rag.py --dataset data/eval/fireagent_eval_sample.jsonl --mode manual
+python scripts/evaluate_rag.py --dataset data/eval/fireagent_benchmark_v1_seed10.jsonl --mode manual
 ```
 
 ## 项目结构

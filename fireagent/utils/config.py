@@ -217,7 +217,7 @@ class TavilyConfig(ConfigSection):
 class EvaluationConfig(ConfigSection):
     """RAG 评测流程默认配置。"""
 
-    dataset_path: str = "data/eval/fireagent_eval_sample.jsonl"
+    dataset_path: str = "data/eval/fireagent_benchmark_v1_seed10.jsonl"
     output_dir: str = "data/eval/runs"
     default_mode: Literal["manual", "ragas", "both"] = "manual"
     fail_under: Optional[float] = None
