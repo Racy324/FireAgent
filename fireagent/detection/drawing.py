@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import cv2
 import numpy as np
 
 from fireagent.detection.schemas import DetectionBox
@@ -20,6 +19,8 @@ def draw_detections(
     detections: list[DetectionBox],
 ) -> np.ndarray:
     """在 BGR 帧上绘制检测框和标签。"""
+    import cv2
+
     annotated = frame_bgr.copy()
     h, w = annotated.shape[:2]
     # 线宽和字体大小根据画面尺寸自适应
