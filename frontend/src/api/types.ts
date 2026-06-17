@@ -151,3 +151,28 @@ export interface ChatMessage {
   stages?: SSEStageEvent[]
   isStreaming?: boolean
 }
+
+// ── Detection 类型 ──
+
+export interface DetectionModelInfo {
+  model_id: string
+  display_name: string
+  type: string
+  ready: boolean
+  labels: string[]
+  default_conf_threshold: number
+}
+
+export interface VideoJobInfo {
+  job_id: string
+  status: 'queued' | 'running' | 'succeeded' | 'failed'
+  progress: number
+  input_filename: string
+  output_url: string | null
+  error: string | null
+  metrics: {
+    frames_total?: number
+    frames_done?: number
+    avg_latency_ms?: number
+  }
+}

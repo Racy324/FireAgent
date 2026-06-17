@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { Home, BookOpen, Flame, MessageCircle, Info, Plus, X } from 'lucide-react'
+import { Home, BookOpen, Flame, MessageCircle, Info, Plus, X, ScanSearch } from 'lucide-react'
 import { useChatStore } from '../stores/chatStore'
 
 const navItems = [
@@ -8,6 +8,7 @@ const navItems = [
   { to: '/knowledge', label: '知识库', icon: BookOpen },
   { to: '/science', label: '科普', icon: Flame },
   { to: '/chat', label: '问答', icon: MessageCircle },
+  { to: '/detect', label: '检测', icon: ScanSearch },
   { to: '/about', label: '关于', icon: Info },
 ]
 

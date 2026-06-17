@@ -164,3 +164,19 @@ observability:
   save_index: true
   include_debug_in_response: true
   max_summary_chars: 500
+
+detection:
+  enabled: true
+  device: auto
+  default_model: yolo_fire_smoke
+  job_output_dir: data/detection/jobs
+  max_upload_mb: 500
+  models:
+    yolo_fire_smoke:
+      type: yolo
+      display_name: YOLO 火灾烟雾检测
+      weights: detect_models/exp110/weights/best.pt
+      labels: ["fire", "smoke", "others"]
+      image_size: 640
+      conf_threshold: 0.35
+      iou_threshold: 0.7

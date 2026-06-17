@@ -48,6 +48,11 @@ eval = [
     "datasets>=2.19",
     "pandas>=2.0"
 ]
+detection = [
+    "opencv-python-headless>=4.9",
+    "ultralytics>=8.3",
+    "numpy>=1.24"
+]
 
 [project.scripts]
 fireagent = "fireagent.main:main"

@@ -343,6 +343,29 @@ class PromptConfig(ConfigSection):
     hallucination_check: str = "fireagent/prompts/hallucination_check.md"
 
 
+class DetectionModelConfig(ConfigSection):
+    """单个检测模型配置。"""
+
+    type: str = "yolo"
+    display_name: str = ""
+    weights: str = ""
+    labels: list[str] = Field(default_factory=lambda: ["fire", "smoke"])
+    image_size: int = Field(default=640, gt=0)
+    conf_threshold: float = Field(default=0.35, ge=0.0, le=1.0)
+    iou_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+
+
+class DetectionConfig(ConfigSection):
+    """视觉检测模块配置。"""
+
+    enabled: bool = True
+    device: str = "auto"
+    default_model: str = "yolo_fire_smoke"
+    job_output_dir: str = "data/detection/jobs"
+    max_upload_mb: int = Field(default=500, gt=0)
+    models: dict[str, DetectionModelConfig] = Field(default_factory=dict)
+
+
 class ObservabilityConfig(ConfigSection):
     """Observability / Trace 配置。"""
 
@@ -372,6 +395,7 @@ class FireAgentConfig(ConfigSection):
     web: WebFallbackConfig = Field(default_factory=WebFallbackConfig)
     prompts: PromptConfig = Field(default_factory=PromptConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
+    detection: DetectionConfig = Field(default_factory=DetectionConfig)
 
 
 ENV_TO_CONFIG_PATH: dict[str, tuple[str, ...]] = {
@@ -469,6 +493,9 @@ ENV_TO_CONFIG_PATH: dict[str, tuple[str, ...]] = {
     "LOG_LEVEL": ("app", "log_level"),
     "OBSERVABILITY_ENABLED": ("observability", "enabled"),
     "OBSERVABILITY_TRACE_DIR": ("observability", "trace_dir"),
+    "DETECTION_ENABLED": ("detection", "enabled"),
+    "DETECTION_DEVICE": ("detection", "device"),
+    "DETECTION_DEFAULT_MODEL": ("detection", "default_model"),
 }
 
 

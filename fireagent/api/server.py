@@ -762,6 +762,14 @@ def create_app(config: Optional[FireAgentConfig] = None) -> object:
             logger.exception("FireAgent /papers/{doc_id} failed")
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    # ── Detection 端点 ──
+    if cfg.detection.enabled:
+        try:
+            from fireagent.api.detection_router import register_detection_endpoints
+            register_detection_endpoints(app)
+        except ImportError as exc:
+            logger.warning("检测模块依赖缺失，跳过注册: %s", exc)
+
     return app
 
 
