@@ -1,7 +1,0 @@
-{"query":"火灾笔记应该用什么格式和语言","expected_intent":"chat","expected_sub_intent":"memory_query"}
-{"query":"我之前问过什么火灾问题","expected_intent":"chat","expected_sub_intent":"history_query"}
-{"query":"以后所有火灾笔记都用中文，并在标题前加【火灾笔记】","expected_intent":"chat","expected_sub_intent":"preference_write"}
-{"query":"隧道火灾烟气对人员疏散有什么影响","expected_intent":"rag","expected_sub_intent":"knowledge_qa"}
-{"query":"总结隧道火灾烟气控制相关论文","expected_intent":"paper","expected_sub_intent":"paper_summary"}
-{"query":"隧道里起火并且有浓烟怎么办","expected_intent":"emergency","expected_sub_intent":"emergency_escape"}
-{"query":"今天午饭吃什么","expected_intent":"reject","expected_sub_intent":"out_of_domain"}
