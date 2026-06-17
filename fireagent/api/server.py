@@ -762,6 +762,10 @@ def create_app(config: Optional[FireAgentConfig] = None) -> object:
             logger.exception("FireAgent /papers/{doc_id} failed")
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    # ── PDF 上传与增量索引 ──
+    from fireagent.api.ingest_router import router as ingest_router
+    app.include_router(ingest_router)
+
     # ── Detection 端点 ──
     if cfg.detection.enabled:
         try:
@@ -839,13 +843,14 @@ def _final_evidence_sufficient(answer: str, raw_sufficient: bool, used_citations
 
 
 def _query_papers_from_qdrant(vs: FireAgentQdrantClient) -> dict:
-    """从 Qdrant 中查询所有论文，按 doc_id 聚合去重。"""
+    """从 Qdrant 中查询所有论文，按 doc_id 聚合去重。排除已删除的 chunks。"""
     from qdrant_client.models import FieldCondition, Filter, MatchExcept, MatchValue
 
     client = vs._create_client()
     collection = vs.config.qdrant.collection
 
-    # scroll 取所有 points 的 payload
+    # scroll 取所有 points 的 payload，排除已删除
+    not_deleted_filter = Filter(must_not=[FieldCondition(key="status", match=MatchValue(value="deleted"))])
     papers: dict = {}
     offset = None
     while True:
@@ -855,6 +860,7 @@ def _query_papers_from_qdrant(vs: FireAgentQdrantClient) -> dict:
             offset=offset,
             with_payload=True,
             with_vectors=False,
+            scroll_filter=not_deleted_filter,
         )
         points, next_offset = result
         for point in points:
@@ -887,7 +893,7 @@ def _query_papers_from_qdrant(vs: FireAgentQdrantClient) -> dict:
 
 
 def _query_chunks_by_doc_id(vs: FireAgentQdrantClient, doc_id: str) -> list:
-    """从 Qdrant 中查询指定 doc_id 的所有 chunks。"""
+    """从 Qdrant 中查询指定 doc_id 的所有 active chunks。"""
     from qdrant_client.models import FieldCondition, Filter, MatchValue
 
     client = vs._create_client()
@@ -902,7 +908,10 @@ def _query_chunks_by_doc_id(vs: FireAgentQdrantClient, doc_id: str) -> list:
             offset=offset,
             with_payload=True,
             with_vectors=False,
-            scroll_filter=Filter(must=[FieldCondition(key="doc_id", match=MatchValue(value=doc_id))]),
+            scroll_filter=Filter(
+                must=[FieldCondition(key="doc_id", match=MatchValue(value=doc_id))],
+                must_not=[FieldCondition(key="status", match=MatchValue(value="deleted"))],
+            ),
         )
         points, next_offset = result
         for point in points:

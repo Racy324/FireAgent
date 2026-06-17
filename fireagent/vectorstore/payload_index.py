@@ -19,6 +19,8 @@ DEFAULT_PAYLOAD_INDEXES: tuple[tuple[str, str], ...] = (
     ("source_type", "keyword"),
     ("page_start", "integer"),
     ("page_end", "integer"),
+    ("content_hash", "keyword"),
+    ("status", "keyword"),
 )
 
 

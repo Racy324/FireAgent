@@ -41,6 +41,7 @@ log.txt
 data/logs/
 data/app/
 data/raw_pdfs/
+data/uploaded_pdfs/
 data/parsed/
 data/chunks/
 data/eval/runs/

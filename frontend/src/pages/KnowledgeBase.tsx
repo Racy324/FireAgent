@@ -1,8 +1,9 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Search, FileText, ChevronLeft, ChevronRight, X, Layers } from 'lucide-react'
+import { Search, FileText, ChevronLeft, ChevronRight, X, Layers, Upload, CheckCircle2, AlertCircle, SkipForward } from 'lucide-react'
 import { fetchPapers, fetchPaperDetail } from '../api/papers'
-import type { PaperItem, PaperDetail } from '../api/types'
+import { uploadPdf } from '../api/ingest'
+import type { PaperItem, PaperDetail, UploadIngestResult } from '../api/types'
 import { truncate } from '../utils/format'
 
 export default function KnowledgeBase() {
@@ -14,6 +15,13 @@ export default function KnowledgeBase() {
   const [loading, setLoading] = useState(false)
   const [selectedPaper, setSelectedPaper] = useState<PaperDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
+
+  // 上传状态
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [uploadResult, setUploadResult] = useState<UploadIngestResult | null>(null)
+  const [dragOver, setDragOver] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const loadPapers = useCallback(async () => {
     setLoading(true)
@@ -43,9 +51,118 @@ export default function KnowledgeBase() {
 
   const totalPages = Math.ceil(total / 12)
 
+  // 上传处理
+  const handleFileSelect = (file: File) => {
+    if (!file.name.toLowerCase().endsWith('.pdf')) return
+    setUploadFile(file)
+    setUploadResult(null)
+  }
+
+  const handleUpload = async () => {
+    if (!uploadFile || uploading) return
+    setUploading(true)
+    setUploadResult(null)
+    try {
+      const result = await uploadPdf(uploadFile)
+      setUploadResult(result)
+      if (result.status === 'indexed') {
+        setUploadFile(null)
+        loadPapers()
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '上传失败'
+      setUploadResult({ status: 'error', doc_id: '', filename: uploadFile.name, content_hash: '', chunks: 0, message: msg, old_chunks_deleted: 0 })
+    }
+    setUploading(false)
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setDragOver(false)
+    const file = e.dataTransfer.files[0]
+    if (file) handleFileSelect(file)
+  }
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    setDragOver(true)
+  }
+
+  const handleDragLeave = () => setDragOver(false)
+
+  const clearUpload = () => {
+    setUploadFile(null)
+    setUploadResult(null)
+  }
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold fire-text">📚 知识库</h1>
+
+      {/* PDF 上传区域 */}
+      <div
+        className={`glass-card p-4 transition-colors ${dragOver ? 'border-fire-400 bg-fire-500/5' : ''}`}
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+      >
+        <div
+          className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors ${
+            dragOver ? 'border-fire-400 bg-fire-500/10' : 'border-white/10 hover:border-fire-500/30 hover:bg-white/[0.02]'
+          }`}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file) handleFileSelect(file)
+              e.target.value = ''
+            }}
+          />
+          <Upload className="mx-auto mb-2 text-gray-500" size={24} />
+          <p className="text-sm text-gray-400">
+            拖拽 PDF 到此处，或<span className="text-fire-400 underline ml-1">点击选择文件</span>
+          </p>
+          <p className="text-xs text-gray-600 mt-1">支持 .pdf，增量更新已有知识库</p>
+        </div>
+
+        {/* 已选择文件 + 上传按钮 */}
+        {uploadFile && (
+          <div className="flex items-center gap-3 mt-3 px-2">
+            <FileText size={16} className="text-fire-400 flex-shrink-0" />
+            <span className="text-sm text-gray-300 truncate flex-1">{uploadFile.name}</span>
+            <span className="text-xs text-gray-500">{(uploadFile.size / 1024 / 1024).toFixed(1)} MB</span>
+            <button
+              onClick={handleUpload}
+              disabled={uploading}
+              className="px-4 py-1.5 bg-fire-500 text-white rounded-lg text-sm hover:bg-fire-600 disabled:opacity-50 transition-colors"
+            >
+              {uploading ? '索引中...' : '上传并索引'}
+            </button>
+            <button onClick={clearUpload} className="p-1 hover:bg-white/10 rounded-lg transition-colors">
+              <X size={16} className="text-gray-500" />
+            </button>
+          </div>
+        )}
+
+        {/* 上传结果 */}
+        {uploadResult && (
+          <div className={`flex items-center gap-2 mt-3 px-2 py-2 rounded-lg text-sm ${
+            uploadResult.status === 'indexed' ? 'bg-green-500/10 text-green-400' :
+            uploadResult.status === 'skipped' ? 'bg-blue-500/10 text-blue-400' :
+            'bg-red-500/10 text-red-400'
+          }`}>
+            {uploadResult.status === 'indexed' && <CheckCircle2 size={16} />}
+            {uploadResult.status === 'skipped' && <SkipForward size={16} />}
+            {uploadResult.status === 'error' && <AlertCircle size={16} />}
+            <span>{uploadResult.message}</span>
+          </div>
+        )}
+      </div>
 
       {/* 搜索栏 */}
       <div className="glass-card p-3 flex items-center gap-2">

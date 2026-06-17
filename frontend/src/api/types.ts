@@ -152,6 +152,18 @@ export interface ChatMessage {
   isStreaming?: boolean
 }
 
+// ── Ingest 类型 ──
+
+export interface UploadIngestResult {
+  status: 'indexed' | 'skipped' | 'error'
+  doc_id: string
+  filename: string
+  content_hash: string
+  chunks: number
+  message: string
+  old_chunks_deleted: number
+}
+
 // ── Detection 类型 ──
 
 export interface DetectionModelInfo {
