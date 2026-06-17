@@ -55,6 +55,7 @@ data/eval/chunk_audit/
 # 模型文件（体积大，不上传）
 # ──────────────────────────────────────
 models/
+!fireagent/detection/models/
 codes/
 detect_models/
 

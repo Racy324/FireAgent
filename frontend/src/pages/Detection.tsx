@@ -31,9 +31,7 @@ export default function Detection() {
     listDetectionModels()
       .then((m) => {
         setModels(m)
-        const ready = m.find((item) => item.ready)
-        if (ready) setSelectedModel(ready.model_id)
-        else if (m.length > 0) setSelectedModel(m[0].model_id)
+        if (m.length > 0) setSelectedModel(m[0].model_id)
       })
       .catch(() => setError('无法加载模型列表'))
       .finally(() => setLoadingModels(false))
@@ -116,8 +114,8 @@ export default function Detection() {
               className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-fire-500/50"
             >
               {models.map((m) => (
-                <option key={m.model_id} value={m.model_id} disabled={!m.ready}>
-                  {m.display_name}{m.ready ? '' : ' (不可用)'}
+                <option key={m.model_id} value={m.model_id}>
+                  {m.display_name}{m.ready ? '' : ' (首次使用将自动加载)'}
                 </option>
               ))}
               {models.length === 0 && !loadingModels && <option>暂无模型</option>}
@@ -160,7 +158,7 @@ export default function Detection() {
         {selectedModelInfo && (
           <div className="flex items-center gap-3 text-xs text-gray-500">
             <span>类别：{selectedModelInfo.labels.join(', ')}</span>
-            <span>状态：{selectedModelInfo.ready ? '✅ 已加载' : '⚠️ 未就绪'}</span>
+            <span>状态：{selectedModelInfo.ready ? '✅ 已加载' : '⏳ 未加载（首次使用自动加载）'}</span>
           </div>
         )}
       </div>

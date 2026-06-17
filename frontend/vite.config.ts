@@ -13,6 +13,7 @@ export default defineConfig({
       '/health': 'http://localhost:8000',
       '/papers': 'http://localhost:8000',
       '/ingest': 'http://localhost:8000',
+      '/detect': 'http://localhost:8000',
     },
   },
 })
