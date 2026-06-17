@@ -264,11 +264,13 @@ export default function Detection() {
             检测结果
           </h2>
 
-          <video
-            controls
-            className="w-full rounded-lg border border-white/10"
-            src={getVideoOutputUrl(jobId)}
-          />
+          <div className="w-full max-h-[600px] bg-black/50 rounded-lg border border-white/10 flex items-center justify-center overflow-hidden">
+            <video
+              controls
+              className="max-h-[600px] w-auto max-w-full object-contain"
+              src={getVideoOutputUrl(jobId)}
+            />
+          </div>
 
           <a
             href={getVideoOutputUrl(jobId)}
