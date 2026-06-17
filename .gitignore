@@ -44,7 +44,9 @@ data/raw_pdfs/
 data/uploaded_pdfs/
 data/parsed/
 data/chunks/
-data/eval/runs/
+data/eval/*
+!data/eval/.gitkeep
+!data/eval/fireagent_benchmark_v1_seed10.jsonl
 data/traces/
 data/detection/jobs/
 data/eval/chunk_audit/
