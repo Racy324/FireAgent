@@ -165,25 +165,42 @@ class VideoJobManager:
             cap.release()
             writer.release()
 
-            # 尝试用 ffmpeg 转码为 H.264（提高浏览器兼容性）
+            # 用 ffmpeg 转码为 H.264（浏览器兼容性最好）
             final_output = job_dir / "output.mp4"
-            try:
-                import subprocess
+            import subprocess
+            import shutil
 
-                subprocess.run(
-                    [
-                        "ffmpeg", "-y", "-i", str(output_path),
-                        "-c:v", "libx264", "-preset", "fast",
-                        "-movflags", "+faststart",
-                        str(final_output),
-                    ],
-                    capture_output=True,
-                    timeout=120,
-                )
-            except Exception:
-                # ffmpeg 不可用时直接用原始输出
-                if final_output != output_path:
+            ffmpeg_ok = False
+            if shutil.which("ffmpeg"):
+                try:
+                    result = subprocess.run(
+                        [
+                            "ffmpeg", "-y", "-i", str(output_path),
+                            "-c:v", "libx264",
+                            "-pix_fmt", "yuv420p",
+                            "-preset", "fast",
+                            "-movflags", "+faststart",
+                            str(final_output),
+                        ],
+                        capture_output=True,
+                        timeout=300,
+                    )
+                    if result.returncode == 0 and final_output.exists() and final_output.stat().st_size > 0:
+                        ffmpeg_ok = True
+                        # 删除原始 mp4v 文件
+                        if output_path != final_output and output_path.exists():
+                            output_path.unlink()
+                    else:
+                        logger.error("ffmpeg 转码失败: %s", result.stderr.decode(errors="replace")[:500])
+                except Exception as exc:
+                    logger.error("ffmpeg 执行异常: %s", exc)
+
+            if not ffmpeg_ok:
+                # ffmpeg 不可用或转码失败，直接用 OpenCV 输出
+                if final_output != output_path and output_path.exists():
                     output_path.rename(final_output)
+                if not final_output.exists() or final_output.stat().st_size == 0:
+                    raise RuntimeError("视频输出失败：ffmpeg 不可用且 OpenCV 输出无效")
 
             avg_latency = round(total_latency / max(frame_idx, 1), 2)
             self._update_job(
