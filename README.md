@@ -12,7 +12,7 @@
 | **会话管理** | 多轮对话 · SQLite 短期记忆 · Qdrant 长期向量记忆（重要性评分 + 时间衰减） |
 | **知识库** | PDF 解析（pdfplumber / MinerU）· 结构感知切块 · 元数据抽取 · Qdrant 向量入库 · 论文浏览与详情查看 |
 | **视频检测** | YOLO 火灾/烟雾检测 · 视频上传 · 异步处理 · 结果视频回放与下载 |
-| **前端界面** | Dashboard 统计 · 知识库浏览 · 火灾科普 · SSE 流式问答 · 视频检测 |
+| **前端界面** | Dashboard 统计 · 知识库浏览 · 火灾科普 · SSE 流式问答 · 视频检测 · 关于页面 |
 | **评测与可观测** | RAG 评测（规则化 + RAGAS）· 请求级 Trace 记录 · CI 流水线 |
 
 ## 系统架构
@@ -140,6 +140,7 @@ docker compose down   # 停止服务
 | `/science` | 火灾科普 | 6 大研究方向知识卡片、应急速查 |
 | `/chat` | 智能问答 | SSE 流式输出、检索阶段可视化、引用来源、会话管理 |
 | `/detect` | 视频检测 | 模型选择、视频上传、进度轮询、结果回放下载 |
+| `/about` | 关于 | 技术栈与 RAG 流程图 |
 
 ## API 端点
 
@@ -235,7 +236,7 @@ python scripts/query_cli.py
 python scripts/rebuild_index.py --input-dir data/raw_pdfs
 
 # RAG 评测
-python scripts/evaluate_rag.py --dataset data/eval/fireagent_benchmark_v1_seed10.jsonl --mode manual
+python scripts/evaluate_rag.py --dataset data/eval/fireagent_eval_sample.jsonl --mode manual
 ```
 
 ## 项目结构
