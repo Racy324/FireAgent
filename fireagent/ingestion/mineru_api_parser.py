@@ -1,12 +1,12 @@
-"""MinerU 云端 API 解析器。
+"""MinerU cloud API parser.
 
-通过 mineru.net 的开放 API 提交 PDF 解析任务，获取结构化 JSON 输出，
-再映射为 FireAgent 统一的 ParsedDocument。
+This parser uses MinerU's precise parsing API for local PDFs:
 
-使用方式：
-    1. 在 .env 中配置 MINERU_API_KEY
-    2. 设置 PDF_PARSER=mineru_api
-    3. 正常运行入库脚本
+1. Request a batch of pre-signed upload URLs.
+2. Upload the local PDF bytes to the returned URL.
+3. Poll the batch extraction result.
+4. Download and unpack the result zip.
+5. Reuse ``MinerUPDFParser`` to map MinerU JSON output to ``ParsedDocument``.
 """
 
 from __future__ import annotations
@@ -14,27 +14,23 @@ from __future__ import annotations
 import json
 import logging
 import time
+import zipfile
 from pathlib import Path
 from typing import Any, Optional
 
 import httpx
 
 from fireagent.ingestion.mineru_parser import MinerUPDFParser
-from fireagent.ingestion.schema import ParsedDocument
 
 logger = logging.getLogger(__name__)
 
 
 class MinerUAPIError(RuntimeError):
-    """MinerU API 调用失败时抛出的异常。"""
+    """Raised when a MinerU cloud API call or result download fails."""
 
 
 class MinerUAPIParser(MinerUPDFParser):
-    """通过 MinerU 云端 API 解析 PDF。
-
-    继承 MinerUPDFParser 的输出解析逻辑（_parse_content_list_v2 等），
-    只替换 _run_mineru 方法，改为调用云端 API。
-    """
+    """Parse PDFs through MinerU's cloud precise parsing API."""
 
     def __init__(
         self,
@@ -51,7 +47,6 @@ class MinerUAPIParser(MinerUPDFParser):
         enable_table: bool = True,
         language: str = "ch",
     ) -> None:
-        # 调用父类 __init__，但 cli_path 不会用到
         super().__init__(
             output_dir=output_dir,
             backend="pipeline",
@@ -71,199 +66,237 @@ class MinerUAPIParser(MinerUPDFParser):
         self.language = language
 
     def _run_mineru(self, pdf_path: Path, output_dir: Path) -> None:
-        """调用 MinerU 云端 API 解析 PDF，将结果保存到 output_dir。
-
-        覆盖父类的 CLI 调用逻辑，改为：
-        1. 上传 PDF 获取文件 URL（或直接用本地文件的 base64）
-        2. 提交解析任务
-        3. 轮询任务状态直到完成
-        4. 下载结果 JSON 到 output_dir
-        """
+        """Call MinerU cloud precise parsing and save its zip contents locally."""
         if not self.api_key:
-            raise MinerUAPIError(
-                "未配置 MINERU_API_KEY。请在 .env 中设置 MinerU 云端 API 密钥。"
-            )
+            raise MinerUAPIError("未配置 MINERU_API_KEY。请在 .env 中设置 MinerU 云端 API 密钥。")
 
-        headers = {
+        headers = self._auth_headers()
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        logger.info("Requesting MinerU upload URL for %s", pdf_path.name)
+        batch_id, upload_url = self._request_upload_url(pdf_path, headers)
+
+        logger.info("Uploading %s to MinerU batch %s", pdf_path.name, batch_id)
+        self._upload_pdf(pdf_path, upload_url)
+
+        logger.info("Polling MinerU batch result: %s", batch_id)
+        result_item = self._poll_batch_result(batch_id, pdf_path.name, headers)
+
+        self._save_batch_result(result_item, output_dir, pdf_path)
+        full_zip_url = self._extract_full_zip_url(result_item)
+        logger.info("Downloading MinerU result zip for %s", pdf_path.name)
+        self._download_and_extract_zip(full_zip_url, output_dir)
+
+    def _auth_headers(self) -> dict[str, str]:
+        return {
             "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
         }
 
-        # ── 1. 上传文件并提交解析任务 ──
-        logger.info("正在上传 PDF 到 MinerU API: %s", pdf_path.name)
-        task_id = self._submit_task(pdf_path, headers)
-        logger.info("任务已提交，task_id: %s", task_id)
-
-        # ── 2. 轮询任务状态 ──
-        result = self._poll_task(task_id, headers)
-        logger.info("任务完成，正在保存结果...")
-
-        # ── 3. 保存结果到 output_dir ──
-        self._save_api_result(result, output_dir, pdf_path)
-
-    def _submit_task(self, pdf_path: Path, headers: dict) -> str:
-        """上传 PDF 并提交解析任务，返回 task_id。
-
-        使用 multipart/form-data 上传，避免 base64 膨胀导致的 413 错误。
-        """
-        url = f"{self.base_url}/api/v4/extract/task"
-
-        fields = {
-            "enable_ocr": (None, str(self.enable_ocr).lower()),
-            "enable_formula": (None, str(self.enable_formula).lower()),
-            "enable_table": (None, str(self.enable_table).lower()),
-            "language": (None, self.language),
+    def _request_upload_url(self, pdf_path: Path, headers: dict[str, str]) -> tuple[str, str]:
+        url = f"{self.base_url}/api/v4/file-urls/batch"
+        payload: dict[str, Any] = {
+            "enable_formula": self.enable_formula,
+            "enable_table": self.enable_table,
+            "language": self.language,
+            "files": [
+                {
+                    "name": pdf_path.name,
+                    "is_ocr": self.enable_ocr,
+                    "data_id": self._safe_stem(pdf_path),
+                }
+            ],
         }
         if self.max_pages is not None:
-            fields["max_pages"] = (None, str(self.max_pages))
+            payload["max_pages"] = self.max_pages
 
-        try:
-            with open(pdf_path, "rb") as f:
-                files = {"file": (pdf_path.name, f, "application/pdf")}
-                with httpx.Client(timeout=self.timeout) as client:
-                    upload_headers = {k: v for k, v in headers.items() if k.lower() != "content-type"}
-                    response = client.post(
-                        url,
-                        headers=upload_headers,
-                        files=files,
-                        data={k: v[1] for k, v in fields.items()},
-                    )
-                    response.raise_for_status()
-                    data = response.json()
-        except httpx.HTTPStatusError as exc:
+        data = self._post_json(url, headers=headers, payload=payload, context="申请上传链接")
+        body = self._response_data(data)
+        batch_id = body.get("batch_id") or body.get("id")
+        upload_url = self._first_upload_url(body)
+
+        if not batch_id or not upload_url:
             raise MinerUAPIError(
-                f"MinerU API 提交任务失败 ({exc.response.status_code}): {exc.response.text}"
-            ) from exc
-        except Exception as exc:
-            raise MinerUAPIError(f"MinerU API 网络错误: {exc}") from exc
+                f"MinerU API 上传链接响应缺少 batch_id 或 upload_url: "
+                f"{json.dumps(data, ensure_ascii=False)[:500]}"
+            )
+        return str(batch_id), upload_url
 
-        # 解析响应获取 task_id
-        if isinstance(data, dict):
-            task_id = data.get("data", {}).get("task_id") or data.get("task_id")
-            if task_id:
-                return str(task_id)
-            # 兼容直接返回 task_id 的情况
-            if "task_id" in data:
-                return str(data["task_id"])
+    def _upload_pdf(self, pdf_path: Path, upload_url: str) -> None:
+        headers = {"Content-Type": "application/pdf"}
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.put(upload_url, headers=headers, content=pdf_path.read_bytes())
+                response.raise_for_status()
+        except Exception as exc:  # noqa: BLE001 - normalize HTTP/client failures.
+            raise MinerUAPIError(f"MinerU API 上传 PDF 失败: {exc}") from exc
 
-        raise MinerUAPIError(f"MinerU API 响应格式异常: {json.dumps(data, ensure_ascii=False)[:500]}")
-
-    def _poll_task(self, task_id: str, headers: dict) -> dict:
-        """轮询任务状态，直到完成或超时。"""
-        url = f"{self.base_url}/api/v4/extract/task/{task_id}"
+    def _poll_batch_result(
+        self,
+        batch_id: str,
+        file_name: str,
+        headers: dict[str, str],
+    ) -> dict[str, Any]:
+        url = f"{self.base_url}/api/v4/extract-results/batch/{batch_id}"
         start = time.time()
 
         while True:
-            elapsed = time.time() - start
-            if elapsed > self.timeout:
-                raise MinerUAPIError(f"MinerU API 任务超时 ({self.timeout}s): {task_id}")
+            if time.time() - start > self.timeout:
+                raise MinerUAPIError(f"MinerU API 任务超时 ({self.timeout}s): {batch_id}")
 
-            try:
-                with httpx.Client(timeout=30) as client:
-                    response = client.get(url, headers=headers)
-                    response.raise_for_status()
-                    data = response.json()
-            except Exception as exc:
-                logger.warning("轮询 MinerU API 失败，重试中: %s", exc)
-                time.sleep(self.poll_interval)
-                continue
+            data = self._get_json(url, headers=headers, context="轮询解析结果")
+            item = self._select_result_item(data, file_name)
+            state = self._extract_state(item or data)
 
-            # 解析状态
-            status = self._extract_status(data)
-            logger.debug("任务 %s 状态: %s (%.0fs)", task_id, status, elapsed)
+            if state in {"done", "completed", "complete", "success", "finished"}:
+                if not item:
+                    raise MinerUAPIError(
+                        f"MinerU API 结果缺少文件条目: {json.dumps(data, ensure_ascii=False)[:500]}"
+                    )
+                return item
 
-            if status in ("completed", "done", "success", "finished"):
-                return data
-            elif status in ("failed", "error"):
-                error_msg = data.get("data", {}).get("error") or data.get("error", "未知错误")
+            if state in {"failed", "fail", "error"}:
+                error_msg = self._extract_error(item or data)
                 raise MinerUAPIError(f"MinerU API 任务失败: {error_msg}")
-            # 其他状态（processing, pending, running）继续轮询
 
             time.sleep(self.poll_interval)
 
-    def _extract_status(self, data: dict) -> str:
-        """从 API 响应中提取任务状态。"""
+    def _save_batch_result(self, result_item: dict[str, Any], output_dir: Path, pdf_path: Path) -> None:
+        raw_file = output_dir / f"{self._safe_stem(pdf_path)}_api_result.json"
+        raw_file.write_text(json.dumps(result_item, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _download_and_extract_zip(self, full_zip_url: str, output_dir: Path) -> None:
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.get(full_zip_url)
+                response.raise_for_status()
+                zip_bytes = response.content
+        except Exception as exc:  # noqa: BLE001 - normalize HTTP/client failures.
+            raise MinerUAPIError(f"MinerU API 下载解析结果失败: {exc}") from exc
+
+        zip_file = output_dir / "mineru_result.zip"
+        zip_file.write_bytes(zip_bytes)
+        try:
+            self._extract_zip_safely(zip_file, output_dir)
+        except zipfile.BadZipFile as exc:
+            raise MinerUAPIError("MinerU API 返回的解析结果不是有效 zip 文件。") from exc
+
+    def _post_json(
+        self,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+        context: str,
+    ) -> dict[str, Any]:
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+                return response.json()
+        except Exception as exc:  # noqa: BLE001 - normalize HTTP/client failures.
+            raise MinerUAPIError(f"MinerU API {context}失败: {exc}") from exc
+
+    def _get_json(self, url: str, headers: dict[str, str], context: str) -> dict[str, Any]:
+        try:
+            with httpx.Client(timeout=30) as client:
+                response = client.get(url, headers=headers)
+                response.raise_for_status()
+                return response.json()
+        except Exception as exc:  # noqa: BLE001 - normalize HTTP/client failures.
+            raise MinerUAPIError(f"MinerU API {context}失败: {exc}") from exc
+
+    @staticmethod
+    def _response_data(data: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(data, dict):
+            return {}
+        if data.get("code") not in (None, 0, 200, "0", "200"):
+            raise MinerUAPIError(
+                f"MinerU API 返回错误: {json.dumps(data, ensure_ascii=False)[:500]}"
+            )
+        body = data.get("data", data)
+        return body if isinstance(body, dict) else {}
+
+    @staticmethod
+    def _first_upload_url(body: dict[str, Any]) -> str:
+        file_urls = body.get("file_urls") or body.get("files") or []
+        if isinstance(file_urls, dict):
+            file_urls = list(file_urls.values())
+        if not isinstance(file_urls, list) or not file_urls:
+            return ""
+
+        first = file_urls[0]
+        if isinstance(first, str):
+            return first
+        if isinstance(first, dict):
+            for key in ("upload_url", "url", "file_url"):
+                value = first.get(key)
+                if value:
+                    return str(value)
+        return ""
+
+    def _select_result_item(self, data: dict[str, Any], file_name: str) -> dict[str, Any] | None:
+        body = self._response_data(data)
+        results = body.get("extract_result") or body.get("results") or body.get("files")
+        if isinstance(results, dict):
+            results = list(results.values())
+        if not isinstance(results, list):
+            return body if self._extract_full_zip_url(body, required=False) else None
+
+        fallback: dict[str, Any] | None = None
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            fallback = fallback or item
+            if item.get("file_name") == file_name or item.get("name") == file_name:
+                return item
+        return fallback
+
+    @staticmethod
+    def _extract_state(data: dict[str, Any]) -> str:
         if not isinstance(data, dict):
             return "unknown"
-        # 兼容多种响应格式
-        d = data.get("data", data)
-        return str(d.get("status", d.get("state", "unknown"))).lower()
+        body = data.get("data", data)
+        if not isinstance(body, dict):
+            return "unknown"
+        return str(body.get("state", body.get("status", "unknown"))).lower()
 
-    def _save_api_result(self, result: dict, output_dir: Path, pdf_path: Path) -> None:
-        """将 API 返回的结果保存为 MinerU 格式的 JSON 文件。
+    @staticmethod
+    def _extract_error(data: dict[str, Any]) -> str:
+        if not isinstance(data, dict):
+            return "unknown error"
+        body = data.get("data", data)
+        if not isinstance(body, dict):
+            body = data
+        return str(body.get("err_msg") or body.get("error") or body.get("message") or "unknown error")
 
-        MinerU API 响应结构：
-            data.result.content_list → 结构化块列表
-            data.result.markdown    → Markdown 全文
+    @staticmethod
+    def _extract_full_zip_url(data: dict[str, Any], required: bool = True) -> str:
+        if not isinstance(data, dict):
+            if required:
+                raise MinerUAPIError("MinerU API 结果缺少 full_zip_url。")
+            return ""
+        for key in ("full_zip_url", "zip_url", "result_url"):
+            value = data.get(key)
+            if value:
+                return str(value)
+        if required:
+            raise MinerUAPIError(
+                f"MinerU API 结果缺少 full_zip_url: {json.dumps(data, ensure_ascii=False)[:500]}"
+            )
+        return ""
 
-        保存为 content_list_v2.json 以复用父类解析逻辑。
-        """
-        output_dir.mkdir(parents=True, exist_ok=True)
-        stem = self._safe_stem(pdf_path)
+    @staticmethod
+    def _extract_zip_safely(zip_file: Path, output_dir: Path) -> None:
+        root = output_dir.resolve()
+        with zipfile.ZipFile(zip_file) as archive:
+            for member in archive.infolist():
+                target = (output_dir / member.filename).resolve()
+                if root != target and root not in target.parents:
+                    raise MinerUAPIError(f"MinerU API zip 包含非法路径: {member.filename}")
+                if member.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                else:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with archive.open(member) as source, target.open("wb") as destination:
+                        destination.write(source.read())
 
-        # 提取实际内容数据（兼容 data.result 和 data 两种层级）
-        data = result.get("data", result)
-        result_data = data.get("result", data)
-
-        # ── 1. 优先提取 content_list ──
-        content_list = result_data.get("content_list") or data.get("content_list")
-        if isinstance(content_list, list) and content_list:
-            out_file = output_dir / f"{stem}_content_list_v2.json"
-            out_file.write_text(json.dumps(content_list, ensure_ascii=False, indent=2))
-            logger.info("已保存 content_list (%d 个块) 到 %s", len(content_list), out_file)
-            return
-
-        # ── 2. 尝试 content_list_v2 ──
-        content_list_v2 = result_data.get("content_list_v2") or data.get("content_list_v2")
-        if isinstance(content_list_v2, list) and content_list_v2:
-            out_file = output_dir / f"{stem}_content_list_v2.json"
-            out_file.write_text(json.dumps(content_list_v2, ensure_ascii=False, indent=2))
-            logger.info("已保存 content_list_v2 (%d 个块) 到 %s", len(content_list_v2), out_file)
-            return
-
-        # ── 3. 如果只有 markdown，保存并尝试转换 ──
-        markdown = result_data.get("markdown") or data.get("markdown")
-        if isinstance(markdown, str) and markdown.strip():
-            # 保存 markdown
-            md_file = output_dir / f"{stem}.md"
-            md_file.write_text(markdown, encoding="utf-8")
-            logger.info("已保存 Markdown 到 %s", md_file)
-
-            # 保存完整响应供调试
-            out_file = output_dir / f"{stem}_api_result.json"
-            out_file.write_text(json.dumps(data, ensure_ascii=False, indent=2))
-
-            # 尝试从 pages/blocks 结构转换
-            converted = self._convert_api_result_to_content_list(data)
-            if converted:
-                cl_file = output_dir / f"{stem}_content_list_v2.json"
-                cl_file.write_text(json.dumps(converted, ensure_ascii=False, indent=2))
-                logger.info("已从 pages/blocks 转换并保存 content_list_v2 (%d 个块)", len(converted))
-            return
-
-        # ── 4. 兜底：保存原始响应 ──
-        out_file = output_dir / f"{stem}_raw_response.json"
-        out_file.write_text(json.dumps(result, ensure_ascii=False, indent=2))
-        logger.warning("MinerU API 响应格式未识别，已保存原始响应到 %s", out_file)
-
-    def _convert_api_result_to_content_list(self, data: dict) -> list[dict] | None:
-        """尝试将 MinerU API 的结果转换为 content_list_v2 格式。"""
-        # 如果有 pages 或 blocks 结构
-        pages = data.get("pages") or data.get("result", {}).get("pages")
-        if isinstance(pages, list):
-            content_list = []
-            for page in pages:
-                page_idx = page.get("page_index", page.get("page", 0))
-                for block in page.get("blocks", page.get("content", [])):
-                    if isinstance(block, dict):
-                        item = {
-                            "type": block.get("type", "text"),
-                            "text": block.get("text", block.get("content", "")),
-                            "page_idx": page_idx,
-                        }
-                        if "bbox" in block:
-                            item["bbox"] = block["bbox"]
-                        if "level" in block:
-                            item["text_level"] = block["level"]
-                        content_list.append(item)
-            return content_list if content_list else None
-        return None
