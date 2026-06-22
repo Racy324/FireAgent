@@ -86,7 +86,6 @@ class MinerUAPIParser(MinerUPDFParser):
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
         }
 
         # ── 1. 上传文件并提交解析任务 ──
@@ -102,33 +101,34 @@ class MinerUAPIParser(MinerUPDFParser):
         self._save_api_result(result, output_dir, pdf_path)
 
     def _submit_task(self, pdf_path: Path, headers: dict) -> str:
-        """上传 PDF 并提交解析任务，返回 task_id。"""
+        """上传 PDF 并提交解析任务，返回 task_id。
+
+        使用 multipart/form-data 上传，避免 base64 膨胀导致的 413 错误。
+        """
         url = f"{self.base_url}/api/v4/extract/task"
 
-        # 读取 PDF 文件为 base64
-        import base64
-
-        pdf_bytes = pdf_path.read_bytes()
-        pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
-
-        payload = {
-            "file_name": pdf_path.name,
-            "file_base64": pdf_base64,
-            "enable_ocr": self.enable_ocr,
-            "enable_formula": self.enable_formula,
-            "enable_table": self.enable_table,
-            "language": self.language,
+        fields = {
+            "enable_ocr": (None, str(self.enable_ocr).lower()),
+            "enable_formula": (None, str(self.enable_formula).lower()),
+            "enable_table": (None, str(self.enable_table).lower()),
+            "language": (None, self.language),
         }
-
-        # 如果有 max_pages 限制
         if self.max_pages is not None:
-            payload["max_pages"] = self.max_pages
+            fields["max_pages"] = (None, str(self.max_pages))
 
         try:
-            with httpx.Client(timeout=self.timeout) as client:
-                response = client.post(url, headers=headers, json=payload)
-                response.raise_for_status()
-                data = response.json()
+            with open(pdf_path, "rb") as f:
+                files = {"file": (pdf_path.name, f, "application/pdf")}
+                with httpx.Client(timeout=self.timeout) as client:
+                    upload_headers = {k: v for k, v in headers.items() if k.lower() != "content-type"}
+                    response = client.post(
+                        url,
+                        headers=upload_headers,
+                        files=files,
+                        data={k: v[1] for k, v in fields.items()},
+                    )
+                    response.raise_for_status()
+                    data = response.json()
         except httpx.HTTPStatusError as exc:
             raise MinerUAPIError(
                 f"MinerU API 提交任务失败 ({exc.response.status_code}): {exc.response.text}"
